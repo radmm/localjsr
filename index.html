@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3f5f1">
+  <title>H2S Badge Reader</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">H₂S</span><span>Badge Reader</span></div>
+      <div class="offline-chip"><i></i> Offline mode</div>
+    </header>
+
+    <section class="workspace">
+      <div class="page-heading">
+        <div>
+          <p class="eyebrow">FIELD CAPTURE / <span id="captureDate"></span></p>
+          <h1>Read a badge.</h1>
+          <p class="lede">Place the full badge inside the frame. The result is calculated on this device.</p>
+        </div>
+        <button class="icon-button" id="settingsButton" aria-label="Open settings" title="Settings">⚙</button>
+      </div>
+
+      <section class="capture-layout">
+        <div class="capture-panel">
+          <div class="camera-frame" id="cameraFrame">
+            <video id="cameraFeed" autoplay playsinline muted></video>
+            <canvas id="captureCanvas" hidden></canvas>
+            <div class="camera-placeholder" id="cameraPlaceholder">
+              <div class="camera-glyph">＋</div>
+              <strong>Camera ready</strong>
+              <span>ArUco markers will align the badge</span>
+            </div>
+            <div class="frame-corners" aria-hidden="true"><b></b><b></b><b></b><b></b></div>
+            <div class="scan-line" aria-hidden="true"></div>
+            <div class="camera-state" id="cameraState">LIVE PREVIEW</div>
+          </div>
+          <div class="capture-actions">
+            <button class="secondary-button" id="uploadButton">Upload image</button>
+            <input id="imageInput" type="file" accept="image/*" hidden>
+            <button class="capture-button" id="captureButton"><span></span> Capture 3 frames</button>
+          </div>
+          <p class="camera-note">6 color references / 3-frame capture / on-device correction. Photos stay local.</p>
+        </div>
+
+        <aside class="session-panel">
+          <div class="panel-header"><span>Current session</span><span class="session-dot"></span></div>
+          <label>Worker ID<input id="workerId" value="WRK-1048" autocomplete="off"></label>
+          <label>Badge ID<input id="badgeId" value="H2S-24091" autocomplete="off"></label>
+          <label>Shift ID<input id="shiftId" value="NIGHT-07" autocomplete="off"></label>
+          <div class="threshold-row"><span>Occupational threshold</span><strong id="thresholdValue">10 ppm·min</strong></div>
+          <button class="text-button" id="clearForm">Clear session data</button>
+        </aside>
+      </section>
+
+      <section class="result-panel" id="resultPanel" aria-live="polite">
+        <div class="result-empty" id="resultEmpty">
+          <span class="empty-icon">↗</span>
+          <div><strong>Awaiting capture</strong><p>Your corrected dose estimate will appear here.</p></div>
+        </div>
+        <div class="result-content" id="resultContent" hidden>
+          <div class="result-main">
+            <p class="eyebrow">LATEST READING</p>
+            <div class="dose-line"><span id="doseValue">0.0</span><small>ppm·min<br>estimated</small></div>
+            <div class="result-meta"><span id="resultTime"></span><span>On-device calculation</span></div>
+          </div>
+          <div class="result-statuses">
+            <div class="status-card" id="validityCard"><span class="status-icon">✓</span><div><small>Badge validity</small><strong id="validityValue">Valid</strong><p id="validityDetail">Expiry patch within pass range</p></div></div>
+            <div class="status-card" id="thresholdCard"><span class="status-icon">↓</span><div><small>Exposure threshold</small><strong id="thresholdResult">Within limit</strong><p>Configured limit: 10 ppm·min</p></div></div>
+          </div>
+        </div>
+        <div class="retake-content" id="retakeContent" hidden>
+          <span class="empty-icon">!</span>
+          <div><strong>Retake photo</strong><p>Reference correction failed quality gate (<span id="qualityValue">0</span> RGB RMS). Reduce glare, blur, or tilt and try again.</p></div>
+        </div>
+        <div class="analysis-steps" id="analysisSteps" hidden>
+          <span class="active">01 Capture x3</span><span>02 Reject</span><span>03 Correct</span><span>04 Gate / Save</span>
+        </div>
+      </section>
+
+      <section class="log-section">
+        <div class="section-heading"><div><p class="eyebrow">LOCAL RECORDS</p><h2>Recent readings</h2></div><span class="record-count" id="recordCount">0 saved</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Worker / badge</th><th>Shift</th><th>Dose estimate</th><th>Validity</th><th>Sync</th></tr></thead><tbody id="recordsBody"><tr class="empty-row"><td colspan="5">No readings yet. Captured records remain available in airplane mode.</td></tr></tbody></table></div>
+      </section>
+    </section>
+    <footer><span>LOCAL STORAGE ACTIVE</span><span>Calibration profile v1.5 / 6 references</span><span>Last sync: never</span></footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
