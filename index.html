@@ -43,7 +43,7 @@
             <input id="imageInput" type="file" accept="image/*" hidden>
             <button class="capture-button" id="captureButton"><span></span> Capture 3 frames</button>
           </div>
-          <p class="camera-note">6 color references / 3-frame capture / on-device correction. Photos stay local.</p>
+          <p class="camera-note">8 fixed H₂S bands / sealed reference drift compensation / on-device correction. Photos stay local.</p>
         </div>
 
         <aside class="session-panel">
@@ -51,6 +51,7 @@
           <label>Worker ID<input id="workerId" value="WRK-1048" autocomplete="off"></label>
           <label>Badge ID<input id="badgeId" value="H2S-24091" autocomplete="off"></label>
           <label>Shift ID<input id="shiftId" value="NIGHT-07" autocomplete="off"></label>
+          <label>Exposure duration (minutes)<input id="exposureMinutes" type="number" min="1" max="480" value="15" autocomplete="off"></label>
           <div class="threshold-row"><span>Occupational threshold</span><strong id="thresholdValue">10 ppm·min</strong></div>
           <button class="text-button" id="clearForm">Clear session data</button>
         </aside>
@@ -64,11 +65,17 @@
         <div class="result-content" id="resultContent" hidden>
           <div class="result-main">
             <p class="eyebrow">LATEST READING</p>
-            <div class="dose-line"><span id="doseValue">0.0</span><small>ppm·min<br>estimated</small></div>
-            <div class="result-meta"><span id="resultTime"></span><span>On-device calculation</span></div>
+            <div class="reading-grid">
+              <div class="reading-field"><small>Estimated H₂S</small><strong id="concentrationValue">0 ppm-equivalent</strong></div>
+              <div class="reading-field"><small>Exposure duration</small><strong id="durationValue">15 min</strong></div>
+              <div class="reading-field"><small>Estimated dose</small><strong id="doseValue">0 ppm·min</strong></div>
+              <div class="reading-field"><small>Confidence</small><strong id="confidenceValue">High</strong></div>
+              <div class="reading-field wide"><small>Temp / humidity drift</small><strong id="driftValue">Low drift</strong></div>
+            </div>
+            <div class="result-meta"><span id="resultTime"></span><span>Band-fit compensation</span></div>
           </div>
           <div class="result-statuses">
-            <div class="status-card" id="validityCard"><span class="status-icon">✓</span><div><small>Badge validity</small><strong id="validityValue">Valid</strong><p id="validityDetail">Expiry patch within pass range</p></div></div>
+            <div class="status-card" id="validityCard"><span class="status-icon">✓</span><div><small>Badge validity</small><strong id="validityValue">Valid</strong><p id="validityDetail">Band fit within calibration</p></div></div>
             <div class="status-card" id="thresholdCard"><span class="status-icon">↓</span><div><small>Exposure threshold</small><strong id="thresholdResult">Within limit</strong><p>Configured limit: 10 ppm·min</p></div></div>
           </div>
         </div>
@@ -83,10 +90,19 @@
 
       <section class="log-section">
         <div class="section-heading"><div><p class="eyebrow">LOCAL RECORDS</p><h2>Recent readings</h2></div><span class="record-count" id="recordCount">0 saved</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Worker / badge</th><th>Shift</th><th>Dose estimate</th><th>Validity</th><th>Sync</th></tr></thead><tbody id="recordsBody"><tr class="empty-row"><td colspan="5">No readings yet. Captured records remain available in airplane mode.</td></tr></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Worker / badge</th><th>Shift</th><th>Band estimate</th><th>Exposure dose</th><th>Confidence</th><th>Drift</th></tr></thead><tbody id="recordsBody"><tr class="empty-row"><td colspan="6">No readings yet. Captured records remain available in airplane mode.</td></tr></tbody></table></div>
+      </section>
+
+      <section class="compare-panel">
+        <div class="section-heading"><div><p class="eyebrow">COMPARE RECORDS</p><h2>Incremental exposure</h2></div></div>
+        <div class="compare-controls">
+          <label>Earlier record<select id="compareLeftSelect"><option value="">Select earlier reading</option></select></label>
+          <label>Later record<select id="compareRightSelect"><option value="">Select later reading</option></select></label>
+        </div>
+        <div class="compare-summary" id="compareSummary">Select two saved readings to view the incremental exposure since the last reading.</div>
       </section>
     </section>
-    <footer><span>LOCAL STORAGE ACTIVE</span><span>Calibration profile v1.5 / 6 references</span><span>Last sync: never</span></footer>
+    <footer><span>LOCAL STORAGE ACTIVE</span><span>Calibration profile v1.6 / 8 fixed bands</span><span>Last sync: never</span></footer>
   </main>
   <script src="app.js"></script>
 </body>
