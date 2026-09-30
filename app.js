@@ -578,12 +578,20 @@ function showDebugCapture(frame, roiMedians) {
 }
 
 function showRefusal(message) {
-  document.querySelector('#analysisSteps').hidden = true;
-  document.querySelector('#resultContent').hidden = true;
-  document.querySelector('#resultEmpty').hidden = true;
+  const analysisSteps = document.querySelector('#analysisSteps');
+  const resultContent = document.querySelector('#resultContent');
+  const resultEmpty = document.querySelector('#resultEmpty');
   const retake = document.querySelector('#retakeContent');
-  retake.hidden = false;
-  document.querySelector('#retakeMessage').textContent = message;
+  if (analysisSteps) analysisSteps.hidden = true;
+  if (resultContent) resultContent.hidden = true;
+  if (resultEmpty) resultEmpty.hidden = true;
+  if (retake) {
+    retake.hidden = false;
+    const retakeMessage = document.querySelector('#retakeMessage');
+    if (retakeMessage) retakeMessage.textContent = message;
+  }
+  const resultPanel = document.querySelector('#resultPanel');
+  if (resultPanel) resultPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function analyzeBadge(capture) {
@@ -635,6 +643,8 @@ function analyzeBadge(capture) {
   const debugToggle = document.querySelector('#debugToggle');
   if (debugToggle?.checked) showDebugCapture(capture.frames[0], reading.roiMedians);
   renderRecords();
+  const resultPanel = document.querySelector('#resultPanel');
+  if (resultPanel) resultPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function initBrowser() {
@@ -673,26 +683,55 @@ function initBrowser() {
   }
 
   async function startCamera() {
-    if (!navigator.mediaDevices?.getUserMedia) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      const cameraState = document.querySelector('#cameraState');
+      if (cameraState) cameraState.textContent = 'UPLOAD MODE';
+      return;
+    }
     try {
-      cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', advanced: [{ exposureMode: 'manual', whiteBalanceMode: 'manual' }] }, audio: false });
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false,
+        });
+      } catch (e1) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      }
+      cameraStream = stream;
       const track = cameraStream.getVideoTracks()[0];
-      const capabilities = track.getCapabilities?.() || {};
-      const lockable = capabilities.exposureMode?.includes('manual') && capabilities.whiteBalanceMode?.includes('manual');
-      if (lockable) await track.applyConstraints({ advanced: [{ exposureMode: 'manual', whiteBalanceMode: 'manual' }] });
+      let lockable = false;
+      if (track?.getCapabilities) {
+        try {
+          const capabilities = track.getCapabilities() || {};
+          lockable = Boolean(capabilities.exposureMode?.includes('manual') && capabilities.whiteBalanceMode?.includes('manual'));
+          if (lockable) {
+            await track.applyConstraints({ advanced: [{ exposureMode: 'manual', whiteBalanceMode: 'manual' }] });
+          }
+        } catch (e) {
+          // ignore manual lock constraint failure
+        }
+      }
       const cameraFeed = document.querySelector('#cameraFeed');
       const cameraPlaceholder = document.querySelector('#cameraPlaceholder');
       const cameraState = document.querySelector('#cameraState');
+      const uploadedPreview = document.querySelector('#uploadedPreview');
+      if (uploadedPreview) uploadedPreview.style.display = 'none';
       if (cameraFeed) {
         cameraFeed.srcObject = cameraStream;
         cameraFeed.style.display = 'block';
+        try { await cameraFeed.play(); } catch (e) {}
         await waitForVideoReady(cameraFeed);
       }
       if (cameraPlaceholder) cameraPlaceholder.style.display = 'none';
-      if (cameraState) cameraState.textContent = lockable ? 'LIVE / AE AWB LOCKED' : 'LIVE / LOCK REQUESTED';
+      if (cameraState) cameraState.textContent = lockable ? 'LIVE / AE AWB LOCKED' : 'LIVE PREVIEW';
     } catch (error) {
       const cameraState = document.querySelector('#cameraState');
-      if (cameraState) cameraState.textContent = 'UPLOAD MODE';
+      if (cameraState) cameraState.textContent = 'CAMERA UNAVAILABLE (USE UPLOAD)';
+      console.warn('startCamera failed:', error);
     }
   }
 
@@ -721,23 +760,45 @@ function initBrowser() {
     });
   }
 
-  document.querySelector('#captureButton').addEventListener('click', () => {
+  document.querySelector('#captureButton').addEventListener('click', async () => {
     document.querySelector('#retakeContent').hidden = true;
-    document.querySelector('#cameraFeed').style.display = 'block';
     const button = document.querySelector('#captureButton');
     const originalLabel = button.innerHTML;
     button.disabled = true;
     button.textContent = 'Starting camera...';
-    captureFrames()
-      .then(analyzeBadge)
-      .catch((error) => showRefusal(error.message || 'Camera unavailable. Upload a badge image instead.'))
-      .finally(() => {
-        button.innerHTML = originalLabel;
-        button.disabled = false;
-      });
+    try {
+      const video = document.querySelector('#cameraFeed');
+      const uploadedPreview = document.querySelector('#uploadedPreview');
+      if (uploadedPreview) uploadedPreview.style.display = 'none';
+      if (video) video.style.display = 'block';
+
+      if (!cameraStream || !video?.srcObject || !video.srcObject.active) {
+        await startCamera();
+      }
+      if (video && video.paused) {
+        try { await video.play(); } catch (e) {}
+      }
+      button.textContent = 'Capturing 3 frames...';
+      const capture = await captureFrames();
+      analyzeBadge(capture);
+    } catch (error) {
+      showRefusal(error.message || 'Camera unavailable. Please allow camera permissions or upload an image.');
+    } finally {
+      button.innerHTML = originalLabel;
+      button.disabled = false;
+    }
   });
 
-  document.querySelector('#uploadButton').addEventListener('click', () => document.querySelector('#imageInput').click());
+  document.querySelector('#cameraPlaceholder')?.addEventListener('click', () => {
+    startCamera();
+  });
+
+  document.querySelector('#uploadButton').addEventListener('click', () => {
+    const input = document.querySelector('#imageInput');
+    input.value = '';
+    input.click();
+  });
+
   document.querySelector('#imageInput').addEventListener('change', () => {
     const file = document.querySelector('#imageInput').files[0];
     if (!file) return;
@@ -746,10 +807,13 @@ function initBrowser() {
     pendingUploadImage.onload = () => {
       cropPreview.src = pendingUploadUrl;
       uploadCrop = { x: 0.08, y: 0.08, w: 0.84, h: 0.84 };
-      cropTouched = false;
-      analyzeCropButton.disabled = true;
+      cropTouched = true;
+      analyzeCropButton.disabled = false;
       cropModal.hidden = false;
       requestAnimationFrame(updateCropSelection);
+    };
+    pendingUploadImage.onerror = () => {
+      showRefusal('Could not read image file. Please try a different photo.');
     };
     pendingUploadImage.src = pendingUploadUrl;
   });
@@ -760,7 +824,10 @@ function initBrowser() {
     if (event.clientX < imageBounds.left || event.clientX > imageBounds.right || event.clientY < imageBounds.top || event.clientY > imageBounds.bottom) return;
     cropStart = cropPoint(event);
     uploadCrop = { x: cropStart.x, y: cropStart.y, w: 0, h: 0 };
-    cropStage.setPointerCapture(event.pointerId);
+    cropTouched = true;
+    try {
+      cropStage.setPointerCapture(event.pointerId);
+    } catch (e) {}
   });
 
   cropStage.addEventListener('pointermove', (event) => {
@@ -779,10 +846,9 @@ function initBrowser() {
   cropStage.addEventListener('pointerup', () => {
     cropStart = null;
     const validCrop = uploadCrop
-      && uploadCrop.w >= 0.15
-      && uploadCrop.h >= 0.15
-      && (uploadCrop.w < 0.999 || uploadCrop.h < 0.999);
-    analyzeCropButton.disabled = !cropTouched || !validCrop;
+      && uploadCrop.w >= 0.05
+      && uploadCrop.h >= 0.05;
+    analyzeCropButton.disabled = !validCrop;
   });
 
   document.querySelector('#cancelCropButton').addEventListener('click', () => {
@@ -793,24 +859,52 @@ function initBrowser() {
 
   analyzeCropButton.addEventListener('click', () => {
     if (!pendingUploadImage || !uploadCrop || analyzeCropButton.disabled) return;
-    const source = document.createElement('canvas');
-    source.width = pendingUploadImage.naturalWidth;
-    source.height = pendingUploadImage.naturalHeight;
-    source.getContext('2d').drawImage(pendingUploadImage, 0, 0);
-    const crop = {
-      x: Math.round(uploadCrop.x * source.width),
-      y: Math.round(uploadCrop.y * source.height),
-      width: Math.round(uploadCrop.w * source.width),
-      height: Math.round(uploadCrop.h * source.height),
-    };
-    const capture = { frames: [cropFrame(source, crop)], backgroundRGB: sampleOutsideCrop(source, crop) };
-    cropModal.hidden = true;
-    URL.revokeObjectURL(pendingUploadUrl);
-    pendingUploadImage = null;
-    document.querySelector('#cameraFeed').style.display = 'none';
-    document.querySelector('#cameraPlaceholder').style.display = 'none';
-    document.querySelector('#cameraState').textContent = 'CROPPED IMAGE';
-    analyzeBadge(capture);
+    try {
+      const source = document.createElement('canvas');
+      source.width = pendingUploadImage.naturalWidth || pendingUploadImage.width;
+      source.height = pendingUploadImage.naturalHeight || pendingUploadImage.height;
+      if (!source.width || !source.height) {
+        showRefusal('Image dimensions could not be read.');
+        return;
+      }
+      source.getContext('2d').drawImage(pendingUploadImage, 0, 0);
+      const crop = {
+        x: Math.round(uploadCrop.x * source.width),
+        y: Math.round(uploadCrop.y * source.height),
+        width: Math.round(uploadCrop.w * source.width),
+        height: Math.round(uploadCrop.h * source.height),
+      };
+      const capture = { frames: [cropFrame(source, crop)], backgroundRGB: sampleOutsideCrop(source, crop) };
+      cropModal.hidden = true;
+      if (pendingUploadUrl) URL.revokeObjectURL(pendingUploadUrl);
+      pendingUploadImage = null;
+
+      // Show cropped badge preview inside camera frame
+      const cameraFeed = document.querySelector('#cameraFeed');
+      const cameraPlaceholder = document.querySelector('#cameraPlaceholder');
+      if (cameraFeed) cameraFeed.style.display = 'none';
+      if (cameraPlaceholder) cameraPlaceholder.style.display = 'none';
+
+      let uploadedPreview = document.querySelector('#uploadedPreview');
+      if (!uploadedPreview) {
+        uploadedPreview = document.createElement('img');
+        uploadedPreview.id = 'uploadedPreview';
+        uploadedPreview.style.width = '100%';
+        uploadedPreview.style.height = '100%';
+        uploadedPreview.style.objectFit = 'contain';
+        uploadedPreview.style.position = 'absolute';
+        uploadedPreview.style.inset = '0';
+        document.querySelector('#cameraFrame').appendChild(uploadedPreview);
+      }
+      uploadedPreview.src = capture.frames[0].toDataURL('image/jpeg');
+      uploadedPreview.style.display = 'block';
+
+      document.querySelector('#cameraState').textContent = 'CROPPED IMAGE';
+      analyzeBadge(capture);
+    } catch (err) {
+      cropModal.hidden = true;
+      showRefusal('Failed to process image: ' + err.message);
+    }
   });
 
   window.addEventListener('resize', updateCropSelection);

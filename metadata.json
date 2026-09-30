@@ -1,0 +1,7 @@
+{
+  "name": "H2S Badge Reader",
+  "description": "On-device field capture, ArUco alignment, and drift-compensated analysis for H2S exposure badges.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
