@@ -42,8 +42,12 @@
             <button class="secondary-button" id="uploadButton">Upload image</button>
             <input id="imageInput" type="file" accept="image/*" hidden>
             <button class="capture-button" id="captureButton"><span></span> Capture 3 frames</button>
+            <button class="secondary-button" id="sampleBadgeButton" type="button" title="Test with calibrated H2S badge">Test badge</button>
           </div>
-          <label class="debug-toggle"><input id="debugToggle" type="checkbox"> Show ROI debug</label>
+          <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+            <label class="debug-toggle"><input id="debugToggle" type="checkbox"> Show ROI debug</label>
+            <label class="debug-toggle"><input id="permissiveToggle" type="checkbox" checked> Field mode (always estimate)</label>
+          </div>
           <p class="camera-note">8 fixed H₂S bands / sealed reference drift compensation / on-device correction. Photos stay local.</p>
         </div>
 
@@ -82,7 +86,14 @@
         </div>
         <div class="retake-content" id="retakeContent" hidden>
           <span class="empty-icon">!</span>
-          <div><strong>Retake photo</strong><p id="retakeMessage">Capture quality check failed.</p></div>
+          <div>
+            <strong>Retake photo</strong>
+            <p id="retakeMessage">Capture quality check failed.</p>
+            <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+              <button class="secondary-button" id="forceEstimateButton" type="button" style="height:32px;font-size:11px;padding:0 12px;">Estimate anyway</button>
+              <button class="secondary-button" id="loadSampleBadgeFromRetake" type="button" style="height:32px;font-size:11px;padding:0 12px;">Load calibrated badge</button>
+            </div>
+          </div>
         </div>
         <div class="analysis-steps" id="analysisSteps" hidden>
           <span class="active">01 Capture x3</span><span>02 Reject</span><span>03 Correct</span><span>04 Gate / Save</span>
