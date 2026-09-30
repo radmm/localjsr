@@ -1,4 +1,4 @@
-const CACHE_NAME = 'h2s-badge-reader-v1';
+const CACHE_NAME = 'h2s-badge-reader-v2';
 
 const PRECACHE_ASSETS = [
   '/',

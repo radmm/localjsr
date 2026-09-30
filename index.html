@@ -2,10 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#17221e">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a0c">
   <meta name="description" content="Industrial H2S dosimeter badge reader with on-device colorimetry, drift compensation, and offline exposure tracking.">
   <title>H2S Badge Reader</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png">
@@ -37,7 +40,7 @@
       </div>
 
       <section class="capture-layout">
-        <div class="capture-panel">
+        <div class="capture-panel" id="captureSection">
           <div class="camera-frame" id="cameraFrame">
             <video id="cameraFeed" autoplay playsinline muted></video>
             <div class="camera-placeholder" id="cameraPlaceholder">
@@ -74,7 +77,7 @@
           <p class="camera-note">8 fixed H₂S bands / sealed reference drift compensation / on-device correction. Photos stay local.</p>
         </div>
 
-        <aside class="session-panel">
+        <aside class="session-panel" id="sessionSection">
           <div class="panel-header"><span>Current session</span><span class="session-dot"></span></div>
           <label>Worker ID<input id="workerId" value="WRK-1048" autocomplete="off"></label>
           <label>Badge ID<input id="badgeId" value="H2S-24091" autocomplete="off"></label>
@@ -123,7 +126,7 @@
         </div>
       </section>
 
-      <section class="log-section">
+      <section class="log-section" id="recordsSection">
         <div class="section-heading"><div><p class="eyebrow">LOCAL RECORDS</p><h2>Recent readings</h2></div><span class="record-count" id="recordCount">0 saved</span></div>
         <div class="table-wrap"><table><thead><tr><th>Worker / badge</th><th>Shift</th><th>Band estimate</th><th>Exposure dose</th><th>Confidence</th><th>Drift</th></tr></thead><tbody id="recordsBody"><tr class="empty-row"><td colspan="6">No readings yet. Captured records remain available in airplane mode.</td></tr></tbody></table></div>
       </section>
@@ -200,6 +203,68 @@
         deferredInstallPrompt = null;
       });
     }
+
+    // Bottom Navigation Tab Switching
+    const navItems = [
+      { btnId: 'navScan', targetId: 'captureSection' },
+      { btnId: 'navResults', targetId: 'resultPanel' },
+      { btnId: 'navRecords', targetId: 'recordsSection' },
+      { btnId: 'navSession', targetId: 'sessionSection' }
+    ];
+
+    navItems.forEach(item => {
+      const btn = document.getElementById(item.btnId);
+      if (btn) {
+        btn.addEventListener('click', () => {
+          navItems.forEach(n => document.getElementById(n.btnId)?.classList.remove('active'));
+          btn.classList.add('active');
+          const target = document.getElementById(item.targetId);
+          if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        });
+      }
+    });
+
+    // Auto-update active tab on scroll
+    if ('IntersectionObserver' in window) {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.4) {
+            const found = navItems.find(n => n.targetId === entry.target.id);
+            if (found) {
+              navItems.forEach(n => document.getElementById(n.btnId)?.classList.remove('active'));
+              document.getElementById(found.btnId)?.classList.add('active');
+            }
+          }
+        });
+      }, { threshold: [0.4] });
+
+      navItems.forEach(item => {
+        const el = document.getElementById(item.targetId);
+        if (el) observer.observe(el);
+      });
+    }
   </script>
+
+  <!-- Floating Pill Bottom Navigation (4 Icons) -->
+  <nav class="floating-bottom-nav" id="bottomNav" aria-label="Quick navigation">
+    <button class="nav-pill-btn active" id="navScan" type="button" aria-label="Scan badge">
+      <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+      <span>Scan</span>
+    </button>
+    <button class="nav-pill-btn" id="navResults" type="button" aria-label="View dose results">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+      <span>Results</span>
+    </button>
+    <button class="nav-pill-btn" id="navRecords" type="button" aria-label="View saved records">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+      <span>Records</span>
+    </button>
+    <button class="nav-pill-btn" id="navSession" type="button" aria-label="Configure session">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      <span>Session</span>
+    </button>
+  </nav>
 </body>
 </html>
