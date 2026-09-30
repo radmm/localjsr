@@ -2,11 +2,12 @@
 
 ## Color-reading pipeline
 
-- The badge uses six fixed-position printed reference swatches across multiple hues, not a three-point grayscale reference.
-- Capture requests manual auto-exposure and auto-white-balance modes when the camera platform exposes those controls. The browser preview reports whether the lock was applied.
-- Each capture samples three consecutive frames. For the strip and every reference patch, the frame furthest from the other two is rejected before averaging.
-- A per-photo RGB correction is fitted against all six known references. Captures over the `32 RGB RMS` residual threshold are refused with `Retake photo`; no dose record is saved.
-- Saved records include `analysisVersion`. The current profile is `v1.5`; bump it whenever the offline calibration notebook produces new dose-regression coefficients.
-- Calibration is an ongoing lab workflow. New exposure samples should be added at the low-concentration end before refitting, where the color response is least linear.
+- Camera captures use the on-screen badge guide as a source-pixel crop. Uploaded photos require a user-drawn crop before analysis.
+- `ROI_LAYOUT` in `app.js` is the versioned badge-relative source for the strip, six reference swatches, and sealed reference ROI. Each rectangle is inset by 25% on every side before sampling.
+- ROI colors are per-channel pixel medians. Camera captures keep three frames, reject the most-distant frame per ROI, then take the median of the remaining two.
+- Captures are refused for non-uniform patches (initial max channel standard deviation `24`), clipping above `2%`, Laplacian variance below `20`, strip/background similarity below `10 RGB`, or the existing reference-fit residual above `32 RGB RMS`.
+- Those gate thresholds are initial engineering values and have not been tuned against field captures. The ROI positions carry forward the app's assumed badge layout and also need confirmation against printed badges.
+- Successful `v1.6` records store ROI medians, ROI layout version, and a small cropped badge thumbnail. Older records retain their original version and are marked as legacy; they are never rewritten.
+- Run the synthetic regression and gate tests with `node tests.js`.
 
 All capture, correction, gating, and record storage run locally without a network dependency.

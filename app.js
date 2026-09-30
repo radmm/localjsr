@@ -1,17 +1,28 @@
 const STORAGE_KEY = 'h2s-badge-records-v1';
 const THRESHOLD = 10;
-const ANALYSIS_VERSION = 'v1.6-bands';
+const ANALYSIS_VERSION = 'v1.6';
+const ROI_LAYOUT_VERSION = 'badge-layout-v1';
 const REFERENCE_ERROR_THRESHOLD = 32;
+const ROI_MARGIN = 0.25;
+const ROI_STDDEV_THRESHOLD = 24;
+const CLIPPED_PIXEL_THRESHOLD = 0.02;
+const BLUR_VARIANCE_THRESHOLD = 20;
+const BACKGROUND_SIMILARITY_THRESHOLD = 10;
 const H2S_BANDS = [0, 1, 2, 5, 10, 20, 50, 100];
-const REFERENCE_SWATCHES = [
-  { x: 0.18, y: 0.2, color: [245, 238, 220] },
-  { x: 0.34, y: 0.2, color: [205, 224, 226] },
-  { x: 0.5, y: 0.2, color: [220, 202, 215] },
-  { x: 0.66, y: 0.2, color: [222, 211, 176] },
-  { x: 0.82, y: 0.2, color: [183, 208, 190] },
-  { x: 0.5, y: 0.34, color: [184, 184, 181] },
-];
-const SEALED_REFERENCE_PATCH = { x: 0.5, y: 0.14 };
+const ROI_LAYOUT = {
+  strip: { x: 0.38, y: 0.50, w: 0.24, h: 0.24 },
+  referenceSwatches: [
+    { key: 'refSwatch1', x: 0.12, y: 0.14, w: 0.12, h: 0.12, color: [245, 238, 220] },
+    { key: 'refSwatch2', x: 0.28, y: 0.14, w: 0.12, h: 0.12, color: [205, 224, 226] },
+    { key: 'refSwatch3', x: 0.44, y: 0.14, w: 0.12, h: 0.12, color: [220, 202, 215] },
+    { key: 'refSwatch4', x: 0.60, y: 0.14, w: 0.12, h: 0.12, color: [222, 211, 176] },
+    { key: 'refSwatch5', x: 0.76, y: 0.14, w: 0.12, h: 0.12, color: [183, 208, 190] },
+    { key: 'refSwatch6', x: 0.44, y: 0.28, w: 0.12, h: 0.12, color: [184, 184, 181] },
+  ],
+  sealedReference: { x: 0.45, y: 0.09, w: 0.10, h: 0.10 },
+};
+const REFERENCE_SWATCHES = ROI_LAYOUT.referenceSwatches;
+let lastDebugCapture = null;
 const SEALED_REFERENCE_BASELINE = [86, -2, 3];
 const BAND_BASE_LAB = {
   0: [85, -2, 3],
@@ -26,6 +37,48 @@ const BAND_BASE_LAB = {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function shrinkRoi(roi, margin = ROI_MARGIN) {
+  return {
+    x: roi.x + roi.w * margin,
+    y: roi.y + roi.h * margin,
+    w: roi.w * (1 - margin * 2),
+    h: roi.h * (1 - margin * 2),
+  };
+}
+
+function median(values) {
+  const sorted = values.slice().sort((first, second) => first - second);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function sampleRoi(context, width, height, roi) {
+  const inner = shrinkRoi(roi);
+  const x = Math.max(0, Math.floor(inner.x * width));
+  const y = Math.max(0, Math.floor(inner.y * height));
+  const right = Math.min(width, Math.ceil((inner.x + inner.w) * width));
+  const bottom = Math.min(height, Math.ceil((inner.y + inner.h) * height));
+  const image = context.getImageData(x, y, right - x, bottom - y);
+  const channels = [[], [], []];
+  let clippedPixels = 0;
+  for (let index = 0; index < image.data.length; index += 4) {
+    const pixel = [image.data[index], image.data[index + 1], image.data[index + 2]];
+    pixel.forEach((channel, channelIndex) => channels[channelIndex].push(channel));
+    if (pixel.some((channel) => channel === 0 || channel === 255)) clippedPixels += 1;
+  }
+  const rgb = channels.map(median);
+  const channelStddev = channels.map((values) => {
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    return Math.sqrt(values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length);
+  });
+  return {
+    rgb,
+    stddev: Math.max(...channelStddev),
+    clippedFraction: clippedPixels / channels[0].length,
+    bounds: { x, y, width: right - x, height: bottom - y },
+  };
 }
 
 function distance(first, second) {
@@ -145,22 +198,6 @@ function rgbToLab(rgb) {
   return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
 }
 
-function samplePatch(context, width, height, x, y, radius = 8) {
-  const centerX = Math.round(width * x);
-  const centerY = Math.round(height * y);
-  const data = context.getImageData(Math.max(0, centerX - radius), Math.max(0, centerY - radius), radius * 2, radius * 2).data;
-  let red = 0;
-  let green = 0;
-  let blue = 0;
-  for (let index = 0; index < data.length; index += 4) {
-    red += data[index];
-    green += data[index + 1];
-    blue += data[index + 2];
-  }
-  const count = data.length / 4;
-  return [red / count, green / count, blue / count];
-}
-
 function rejectOutlier(readings) {
   const scores = readings.map((reading, index) => readings.reduce((total, other, otherIndex) => index === otherIndex ? total : total + distance(reading, other), 0));
   const rejected = scores.indexOf(Math.max(...scores));
@@ -232,29 +269,107 @@ function fitCorrection(observed) {
   };
 }
 
-function calculateReading(frames) {
-  const canvas = typeof document !== 'undefined' ? document.querySelector('#captureCanvas') : null;
-  if (!canvas || !canvas.width || !canvas.height) {
-    return { dose: 0, valid: true, quality: 0, concentrationBandEstimate: '0 ppm-equivalent', confidenceLevel: 'High', tempHumidityDriftFlag: 'Low drift', durationMinutes: 15, compensationFactor: 1, temperatureC: 25, humidityPct: 50, bandDistance: 0, ppm: 0, stripLab: [0, 0, 0], sealedReferenceLab: SEALED_REFERENCE_BASELINE };
+function calculateBlurVariance(canvas) {
+  const { width, height } = canvas;
+  if (width < 3 || height < 3) return 0;
+  const pixels = canvas.getContext('2d').getImageData(0, 0, width, height).data;
+  const luminance = (x, y) => {
+    const index = (y * width + x) * 4;
+    return 0.299 * pixels[index] + 0.587 * pixels[index + 1] + 0.114 * pixels[index + 2];
+  };
+  const step = Math.max(1, Math.floor(Math.sqrt((width * height) / 1000000)));
+  let sum = 0;
+  let sumSquares = 0;
+  let count = 0;
+  for (let y = 1; y < height - 1; y += step) {
+    for (let x = 1; x < width - 1; x += step) {
+      const value = 4 * luminance(x, y) - luminance(x - 1, y) - luminance(x + 1, y) - luminance(x, y - 1) - luminance(x, y + 1);
+      sum += value;
+      sumSquares += value * value;
+      count += 1;
+    }
+  }
+  return Math.max(0, sumSquares / count - (sum / count) ** 2);
+}
+
+function medianAcrossFrames(readings) {
+  if (readings.length === 1) return readings[0];
+  if (readings.length === 2) return [0, 1, 2].map((channel) => median(readings.map((reading) => reading[channel])));
+  const scores = readings.map((reading, index) => readings.reduce((total, other, otherIndex) => index === otherIndex ? total : total + distance(reading, other), 0));
+  const rejectedIndex = scores.indexOf(Math.max(...scores));
+  const kept = readings.filter((_, index) => index !== rejectedIndex);
+  return [0, 1, 2].map((channel) => median(kept.map((reading) => reading[channel])));
+}
+
+function createThumbnail(frame) {
+  if (typeof document === 'undefined') return frame.toDataURL?.('image/jpeg', 0.55) || '';
+  const thumbnail = document.createElement('canvas');
+  const scale = Math.min(1, 320 / frame.width);
+  thumbnail.width = Math.round(frame.width * scale);
+  thumbnail.height = Math.round(frame.height * scale);
+  thumbnail.getContext('2d').drawImage(frame, 0, 0, thumbnail.width, thumbnail.height);
+  return thumbnail.toDataURL('image/jpeg', 0.55);
+}
+
+function refuseReading(message, quality = 0, diagnostics = {}) {
+  return { valid: false, refusalReason: message, quality, ...diagnostics };
+}
+
+function calculateReading(frames, { backgroundRGB = null } = {}) {
+  if (!frames?.length || frames.some((frame) => !frame?.width || !frame?.height)) {
+    return refuseReading('Badge crop unavailable. Align the badge and try again.');
   }
 
-  const patchReadings = REFERENCE_SWATCHES.map((swatch) => rejectOutlier(frames.map((frame) => samplePatch(frame.getContext('2d'), frame.width, frame.height, swatch.x, swatch.y))));
-  const correct = fitCorrection(patchReadings);
-  const residual = Math.sqrt(patchReadings.reduce((total, reading, index) => total + distance(correct(reading), REFERENCE_SWATCHES[index].color) ** 2, 0) / patchReadings.length);
-  const stripRGB = correct(rejectOutlier(frames.map((frame) => samplePatch(frame.getContext('2d'), frame.width, frame.height, 0.5, 0.62))));
-  const sealedReferenceRGB = correct(rejectOutlier(frames.map((frame) => samplePatch(frame.getContext('2d'), frame.width, frame.height, SEALED_REFERENCE_PATCH.x, SEALED_REFERENCE_PATCH.y))));
+  const allRois = [
+    { key: 'strip', ...ROI_LAYOUT.strip },
+    ...REFERENCE_SWATCHES,
+    { key: 'sealedReference', ...ROI_LAYOUT.sealedReference },
+  ];
+  const perFrame = frames.map((frame) => {
+    const context = frame.getContext('2d');
+    return Object.fromEntries(allRois.map((roi) => [roi.key, sampleRoi(context, frame.width, frame.height, roi)]));
+  });
+  const roiMedians = Object.fromEntries(allRois.map((roi) => [
+    roi.key,
+    medianAcrossFrames(perFrame.map((frameSamples) => frameSamples[roi.key].rgb)),
+  ]));
+  const diagnostics = {
+    roiMedians,
+    roiLayoutVersion: ROI_LAYOUT_VERSION,
+    thumbnail: createThumbnail(frames[0]),
+  };
+  for (const frameSamples of perFrame) {
+    for (const sample of Object.values(frameSamples)) {
+      if (sample.stddev > ROI_STDDEV_THRESHOLD) return refuseReading('Patch not uniform, retake', 0, diagnostics);
+      if (sample.clippedFraction > CLIPPED_PIXEL_THRESHOLD) return refuseReading('Too bright or dark', 0, diagnostics);
+    }
+  }
+  if (frames.some((frame) => calculateBlurVariance(frame) < BLUR_VARIANCE_THRESHOLD)) {
+    return refuseReading('Hold steady', 0, diagnostics);
+  }
+
+  if (backgroundRGB && distance(roiMedians.strip, backgroundRGB) < BACKGROUND_SIMILARITY_THRESHOLD) {
+    return refuseReading('Badge not aligned; strip matches background', 0, diagnostics);
+  }
+
+  const referenceReadings = REFERENCE_SWATCHES.map((swatch) => roiMedians[swatch.key]);
+  const correct = fitCorrection(referenceReadings);
+  const residual = Math.sqrt(referenceReadings.reduce((total, reading, index) => total + distance(correct(reading), REFERENCE_SWATCHES[index].color) ** 2, 0) / referenceReadings.length);
+  if (residual > REFERENCE_ERROR_THRESHOLD) return refuseReading(`Reference correction failed (${residual.toFixed(1)} RGB RMS)`, residual, diagnostics);
+
+  const stripRGB = correct(roiMedians.strip);
+  const sealedReferenceRGB = correct(roiMedians.sealedReference);
   const stripLab = rgbToLab(stripRGB);
   const sealedReferenceLab = rgbToLab(sealedReferenceRGB);
   const compensationFactor = computeCompensationFactor(sealedReferenceLab);
   const durationMinutes = Number((typeof document !== 'undefined' ? document.querySelector('#exposureMinutes')?.value : '15') || 15);
-  const summary = summarizeReading({ stripLab, sealedReferenceLab, durationMinutes, compensationFactor });
-
   return {
-    ...summary,
-    valid: residual <= REFERENCE_ERROR_THRESHOLD,
+    ...summarizeReading({ stripLab, sealedReferenceLab, durationMinutes, compensationFactor }),
+    valid: true,
     quality: residual,
     stripLab,
     sealedReferenceLab,
+    ...diagnostics,
   };
 }
 
@@ -317,14 +432,17 @@ function renderRecords() {
     return;
   }
 
-  body.innerHTML = stored.slice().reverse().map((record) => `<tr>
+  body.innerHTML = stored.slice().reverse().map((record) => {
+    const versionFlag = record.analysisVersion === ANALYSIS_VERSION ? '' : `<small class="record-version">Legacy ${record.analysisVersion || 'record'}</small>`;
+    return `<tr>
     <td class="worker-cell"><strong>${record.workerId}</strong><small>${record.badgeId}</small></td>
     <td>${record.shiftId}</td>
-    <td><strong>${record.concentrationBandEstimate || '0 ppm-equivalent'}</strong></td>
+    <td><strong>${record.concentrationBandEstimate || '0 ppm-equivalent'}</strong>${versionFlag}</td>
     <td><strong>${record.dose.toFixed(1)}</strong> ppm·min</td>
     <td><span class="pill ${record.confidenceLevel ? record.confidenceLevel.toLowerCase() : 'medium'}">${record.confidenceLevel || 'Medium'}</span></td>
     <td><span class="pill subtle">${record.tempHumidityDriftFlag || 'Low drift'}</span></td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 
   updateComparisonSummary();
 }
@@ -344,82 +462,179 @@ function showAnalysis() {
   }
 }
 
-function captureFrames() {
-  const canvas = document.querySelector('#captureCanvas');
-  const video = document.querySelector('#cameraFeed');
-  if (!video || !video.videoWidth) return Promise.resolve([canvas, canvas, canvas]);
-  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-  const frames = [];
-  return new Promise((resolve) => {
-    const capture = () => {
-      const frame = document.createElement('canvas');
-      frame.width = canvas.width;
-      frame.height = canvas.height;
-      frame.getContext('2d').drawImage(video, 0, 0);
-      frames.push(frame);
-      if (frames.length === 3) resolve(frames); else requestAnimationFrame(capture);
+function isVideoReady(video) {
+  return Boolean(video && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0);
+}
+
+function waitForVideoReady(video, timeoutMs = 10000) {
+  if (!video) return Promise.reject(new Error('Camera unavailable. Allow camera permission and try again.'));
+  if (isVideoReady(video)) return Promise.resolve(video);
+  if (!video.srcObject) return Promise.reject(new Error('Camera unavailable. Allow camera permission and try again.'));
+
+  return new Promise((resolve, reject) => {
+    let timeout;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      video.removeEventListener('loadeddata', checkReady);
+      video.removeEventListener('canplay', checkReady);
+      video.removeEventListener('playing', checkReady);
     };
-    capture();
+    const finish = (callback, value) => {
+      cleanup();
+      callback(value);
+    };
+    const checkReady = () => {
+      if (isVideoReady(video)) finish(resolve, video);
+    };
+
+    video.addEventListener('loadeddata', checkReady);
+    video.addEventListener('canplay', checkReady);
+    video.addEventListener('playing', checkReady);
+    timeout = setTimeout(() => finish(reject, new Error('Camera is still starting. Wait for the live preview and try again.')), timeoutMs);
+    video.play().catch(() => finish(reject, new Error('Camera video could not start. Allow camera access and try again.')));
+    checkReady();
   });
 }
 
-function analyzeBadge(frames) {
-  showAnalysis();
-  setTimeout(() => {
-    const reading = calculateReading(frames);
-    if (!reading.valid) {
-      const analysisSteps = document.querySelector('#analysisSteps');
-      const resultContent = document.querySelector('#resultContent');
-      const retakeContent = document.querySelector('#retakeContent');
-      if (analysisSteps) analysisSteps.hidden = true;
-      if (resultContent) resultContent.hidden = true;
-      if (retakeContent) {
-        retakeContent.hidden = false;
-        document.querySelector('#qualityValue').textContent = `${reading.quality.toFixed(1)} / ${REFERENCE_ERROR_THRESHOLD}`;
+function getGuideCrop(video, frame, guide) {
+  const frameBounds = frame.getBoundingClientRect();
+  const guideBounds = guide.getBoundingClientRect();
+  const scale = Math.max(frameBounds.width / video.videoWidth, frameBounds.height / video.videoHeight);
+  const renderedWidth = video.videoWidth * scale;
+  const renderedHeight = video.videoHeight * scale;
+  const offsetX = (frameBounds.width - renderedWidth) / 2;
+  const offsetY = (frameBounds.height - renderedHeight) / 2;
+  const x = clamp((guideBounds.left - frameBounds.left - offsetX) / scale, 0, video.videoWidth - 1);
+  const y = clamp((guideBounds.top - frameBounds.top - offsetY) / scale, 0, video.videoHeight - 1);
+  const right = clamp((guideBounds.right - frameBounds.left - offsetX) / scale, x + 1, video.videoWidth);
+  const bottom = clamp((guideBounds.bottom - frameBounds.top - offsetY) / scale, y + 1, video.videoHeight);
+  return { x: Math.floor(x), y: Math.floor(y), width: Math.floor(right - x), height: Math.floor(bottom - y) };
+}
+
+function cropFrame(source, crop) {
+  const cropped = document.createElement('canvas');
+  cropped.width = crop.width;
+  cropped.height = crop.height;
+  cropped.getContext('2d').drawImage(source, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
+  return cropped;
+}
+
+function sampleOutsideCrop(source, crop) {
+  const context = source.getContext('2d');
+  const regions = [
+    { x: 0, y: 0, w: source.width, h: crop.y },
+    { x: 0, y: crop.y + crop.height, w: source.width, h: source.height - crop.y - crop.height },
+    { x: 0, y: crop.y, w: crop.x, h: crop.height },
+    { x: crop.x + crop.width, y: crop.y, w: source.width - crop.x - crop.width, h: crop.height },
+  ].filter((region) => region.w > 0 && region.h > 0);
+  const channels = [[], [], []];
+  for (const region of regions) {
+    const step = Math.max(1, Math.floor(Math.sqrt((region.w * region.h) / 2500)));
+    const pixels = context.getImageData(region.x, region.y, region.w, region.h).data;
+    for (let y = 0; y < region.h; y += step) {
+      for (let x = 0; x < region.w; x += step) {
+        const index = (y * region.w + x) * 4;
+        channels.forEach((channel, channelIndex) => channel.push(pixels[index + channelIndex]));
       }
-      return;
     }
+  }
+  return channels[0].length ? channels.map(median) : null;
+}
 
-    const now = new Date();
-    const record = {
-      workerId: document.querySelector('#workerId').value || 'UNASSIGNED',
-      badgeId: document.querySelector('#badgeId').value || 'UNKNOWN',
-      shiftId: document.querySelector('#shiftId').value || 'UNASSIGNED',
-      timestamp: now.toISOString(),
-      dose: reading.dose,
-      valid: true,
-      synced: false,
-      analysisVersion: ANALYSIS_VERSION,
-      concentrationBandEstimate: reading.concentrationBandEstimate,
-      confidenceLevel: reading.confidenceLevel,
-      tempHumidityDriftFlag: reading.tempHumidityDriftFlag,
-      durationMinutes: reading.durationMinutes,
-      compensationFactor: reading.compensationFactor,
-      temperatureC: reading.temperatureC,
-      humidityPct: reading.humidityPct,
-    };
+function drawDebugOverlay(frame, roiMedians) {
+  const overlay = document.querySelector('#roiDebugOverlay');
+  if (!overlay) return;
+  overlay.width = frame.width;
+  overlay.height = frame.height;
+  const context = overlay.getContext('2d');
+  context.clearRect(0, 0, overlay.width, overlay.height);
+  context.drawImage(frame, 0, 0);
+  const rois = [{ key: 'strip', ...ROI_LAYOUT.strip }, ...REFERENCE_SWATCHES, { key: 'sealedReference', ...ROI_LAYOUT.sealedReference }];
+  rois.forEach((roi) => {
+    const inner = shrinkRoi(roi);
+    const x = inner.x * overlay.width;
+    const y = inner.y * overlay.height;
+    const width = inner.w * overlay.width;
+    const height = inner.h * overlay.height;
+    const label = `${roi.key}: ${roiMedians[roi.key].map((channel) => Math.round(channel)).join(',')}`;
+    context.strokeStyle = roi.key === 'strip' ? '#d9ee55' : roi.key === 'sealedReference' ? '#e77760' : '#69b8db';
+    context.lineWidth = Math.max(2, overlay.width / 500);
+    context.strokeRect(x, y, width, height);
+    context.font = `${Math.max(12, overlay.width / 90)}px sans-serif`;
+    const labelY = y > overlay.height * 0.08 ? y - 5 : y + height + 16;
+    context.fillStyle = 'rgba(0,0,0,.78)';
+    context.fillRect(x, labelY - 14, Math.min(context.measureText(label).width + 8, overlay.width - x), 18);
+    context.fillStyle = '#fff';
+    context.fillText(label, x + 4, labelY);
+  });
+}
 
-    const nextRecords = [...records(), record];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRecords));
+function showDebugCapture(frame, roiMedians) {
+  lastDebugCapture = { frame, roiMedians };
+  const overlay = document.querySelector('#roiDebugOverlay');
+  const enabled = document.querySelector('#debugToggle').checked;
+  overlay.hidden = !enabled;
+  if (enabled) drawDebugOverlay(frame, roiMedians);
+}
 
-    const resultContent = document.querySelector('#resultContent');
-    const analysisSteps = document.querySelector('#analysisSteps');
-    if (analysisSteps) analysisSteps.hidden = true;
-    if (resultContent) resultContent.hidden = false;
+function showRefusal(message) {
+  document.querySelector('#analysisSteps').hidden = true;
+  document.querySelector('#resultContent').hidden = true;
+  document.querySelector('#resultEmpty').hidden = true;
+  const retake = document.querySelector('#retakeContent');
+  retake.hidden = false;
+  document.querySelector('#retakeMessage').textContent = message;
+}
 
-    document.querySelector('#concentrationValue').textContent = `~${record.concentrationBandEstimate}`;
-    document.querySelector('#durationValue').textContent = `${record.durationMinutes} min`;
-    document.querySelector('#doseValue').textContent = `${record.dose.toFixed(1)} ppm·min`;
-    document.querySelector('#confidenceValue').textContent = record.confidenceLevel;
-    document.querySelector('#driftValue').textContent = record.tempHumidityDriftFlag;
-    document.querySelector('#resultTime').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    document.querySelector('#validityValue').textContent = 'Valid';
-    document.querySelector('#validityDetail').textContent = `Band fit ${record.concentrationBandEstimate}; drift ${record.tempHumidityDriftFlag.toLowerCase()}`;
-    document.querySelector('#validityCard').className = 'status-card';
-    document.querySelector('#thresholdResult').textContent = record.dose <= THRESHOLD ? 'Within limit' : 'Over limit';
-    document.querySelector('#thresholdCard').className = `status-card ${record.dose <= THRESHOLD ? '' : 'warning'}`;
-    renderRecords();
-  }, 1500);
+function analyzeBadge(capture) {
+  showAnalysis();
+  const reading = calculateReading(capture.frames, { backgroundRGB: capture.backgroundRGB });
+  if (!reading.valid) {
+    if (reading.roiMedians) showDebugCapture(capture.frames[0], reading.roiMedians);
+    showRefusal(reading.refusalReason);
+    return;
+  }
+
+  const now = new Date();
+  const record = {
+    workerId: document.querySelector('#workerId').value || 'UNASSIGNED',
+    badgeId: document.querySelector('#badgeId').value || 'UNKNOWN',
+    shiftId: document.querySelector('#shiftId').value || 'UNASSIGNED',
+    timestamp: now.toISOString(),
+    dose: reading.dose,
+    valid: true,
+    synced: false,
+    analysisVersion: ANALYSIS_VERSION,
+    roiLayoutVersion: reading.roiLayoutVersion,
+    roiMedians: reading.roiMedians,
+    badgeThumbnail: reading.thumbnail,
+    concentrationBandEstimate: reading.concentrationBandEstimate,
+    confidenceLevel: reading.confidenceLevel,
+    tempHumidityDriftFlag: reading.tempHumidityDriftFlag,
+    durationMinutes: reading.durationMinutes,
+    compensationFactor: reading.compensationFactor,
+    temperatureC: reading.temperatureC,
+    humidityPct: reading.humidityPct,
+  };
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify([...records(), record]));
+  document.querySelector('#analysisSteps').hidden = true;
+  document.querySelector('#resultContent').hidden = false;
+  document.querySelector('#retakeContent').hidden = true;
+  document.querySelector('#concentrationValue').textContent = `~${record.concentrationBandEstimate}`;
+  document.querySelector('#durationValue').textContent = `${record.durationMinutes} min`;
+  document.querySelector('#doseValue').textContent = `${record.dose.toFixed(1)} ppm·min`;
+  document.querySelector('#confidenceValue').textContent = record.confidenceLevel;
+  document.querySelector('#driftValue').textContent = record.tempHumidityDriftFlag;
+  document.querySelector('#resultTime').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  document.querySelector('#validityValue').textContent = 'Valid';
+  document.querySelector('#validityDetail').textContent = `Band fit ${record.concentrationBandEstimate}; drift ${record.tempHumidityDriftFlag.toLowerCase()}`;
+  document.querySelector('#validityCard').className = 'status-card';
+  document.querySelector('#thresholdResult').textContent = record.dose <= THRESHOLD ? 'Within limit' : 'Over limit';
+  document.querySelector('#thresholdCard').className = `status-card ${record.dose <= THRESHOLD ? '' : 'warning'}`;
+  const debugToggle = document.querySelector('#debugToggle');
+  if (debugToggle?.checked) showDebugCapture(capture.frames[0], reading.roiMedians);
+  renderRecords();
 }
 
 function initBrowser() {
@@ -427,6 +642,36 @@ function initBrowser() {
   if (dateTarget) dateTarget.textContent = new Intl.DateTimeFormat('en', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date()).toUpperCase();
 
   let cameraStream;
+  let pendingUploadImage;
+  let pendingUploadUrl;
+  let uploadCrop = null;
+  let cropStart = null;
+  let cropTouched = false;
+
+  const cropModal = document.querySelector('#cropModal');
+  const cropStage = document.querySelector('#cropStage');
+  const cropPreview = document.querySelector('#cropPreview');
+  const cropSelection = document.querySelector('#cropSelection');
+  const analyzeCropButton = document.querySelector('#analyzeCropButton');
+
+  function updateCropSelection() {
+    if (!pendingUploadImage || !cropStage || !cropPreview || !uploadCrop) return;
+    const stageBounds = cropStage.getBoundingClientRect();
+    const imageBounds = cropPreview.getBoundingClientRect();
+    cropSelection.style.left = `${imageBounds.left - stageBounds.left + uploadCrop.x * imageBounds.width}px`;
+    cropSelection.style.top = `${imageBounds.top - stageBounds.top + uploadCrop.y * imageBounds.height}px`;
+    cropSelection.style.width = `${uploadCrop.w * imageBounds.width}px`;
+    cropSelection.style.height = `${uploadCrop.h * imageBounds.height}px`;
+  }
+
+  function cropPoint(event) {
+    const bounds = cropPreview.getBoundingClientRect();
+    return {
+      x: clamp((event.clientX - bounds.left) / bounds.width, 0, 1),
+      y: clamp((event.clientY - bounds.top) / bounds.height, 0, 1),
+    };
+  }
+
   async function startCamera() {
     if (!navigator.mediaDevices?.getUserMedia) return;
     try {
@@ -441,6 +686,7 @@ function initBrowser() {
       if (cameraFeed) {
         cameraFeed.srcObject = cameraStream;
         cameraFeed.style.display = 'block';
+        await waitForVideoReady(cameraFeed);
       }
       if (cameraPlaceholder) cameraPlaceholder.style.display = 'none';
       if (cameraState) cameraState.textContent = lockable ? 'LIVE / AE AWB LOCKED' : 'LIVE / LOCK REQUESTED';
@@ -450,55 +696,134 @@ function initBrowser() {
     }
   }
 
+  async function captureFrames() {
+    const video = document.querySelector('#cameraFeed');
+    await waitForVideoReady(video);
+    const crop = getGuideCrop(video, document.querySelector('#cameraFrame'), document.querySelector('#badgeGuide'));
+    const sourceFrames = [];
+    return new Promise((resolve) => {
+      const capture = () => {
+        const source = document.createElement('canvas');
+        source.width = video.videoWidth;
+        source.height = video.videoHeight;
+        source.getContext('2d').drawImage(video, 0, 0, source.width, source.height);
+        sourceFrames.push(source);
+        if (sourceFrames.length < 3) {
+          requestAnimationFrame(capture);
+          return;
+        }
+        resolve({
+          frames: sourceFrames.map((frame) => cropFrame(frame, crop)),
+          backgroundRGB: sampleOutsideCrop(sourceFrames[0], crop),
+        });
+      };
+      capture();
+    });
+  }
+
   document.querySelector('#captureButton').addEventListener('click', () => {
-    const retakeContent = document.querySelector('#retakeContent');
-    if (retakeContent) retakeContent.hidden = true;
-    captureFrames().then(analyzeBadge);
+    document.querySelector('#retakeContent').hidden = true;
+    document.querySelector('#cameraFeed').style.display = 'block';
+    const button = document.querySelector('#captureButton');
+    const originalLabel = button.innerHTML;
+    button.disabled = true;
+    button.textContent = 'Starting camera...';
+    captureFrames()
+      .then(analyzeBadge)
+      .catch((error) => showRefusal(error.message || 'Camera unavailable. Upload a badge image instead.'))
+      .finally(() => {
+        button.innerHTML = originalLabel;
+        button.disabled = false;
+      });
   });
 
   document.querySelector('#uploadButton').addEventListener('click', () => document.querySelector('#imageInput').click());
   document.querySelector('#imageInput').addEventListener('change', () => {
     const file = document.querySelector('#imageInput').files[0];
     if (!file) return;
-
-    const imageUrl = URL.createObjectURL(file);
-    const image = new Image();
-    image.onload = () => {
-      const canvas = document.querySelector('#captureCanvas');
-      canvas.width = image.naturalWidth || image.width;
-      canvas.height = image.naturalHeight || image.height;
-      const context = canvas.getContext('2d');
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-      const cameraFeed = document.querySelector('#cameraFeed');
-      if (cameraFeed) {
-        cameraFeed.srcObject = null;
-        if (cameraFeed.pause) cameraFeed.pause();
-      }
-      const retakeContent = document.querySelector('#retakeContent');
-      if (retakeContent) retakeContent.hidden = true;
-      const cameraPlaceholder = document.querySelector('#cameraPlaceholder');
-      if (cameraPlaceholder) cameraPlaceholder.style.display = 'none';
-      const cameraState = document.querySelector('#cameraState');
-      if (cameraState) cameraState.textContent = 'IMAGE LOADED';
-      analyzeBadge([canvas, canvas, canvas]);
+    pendingUploadUrl = URL.createObjectURL(file);
+    pendingUploadImage = new Image();
+    pendingUploadImage.onload = () => {
+      cropPreview.src = pendingUploadUrl;
+      uploadCrop = { x: 0.08, y: 0.08, w: 0.84, h: 0.84 };
+      cropTouched = false;
+      analyzeCropButton.disabled = true;
+      cropModal.hidden = false;
+      requestAnimationFrame(updateCropSelection);
     };
+    pendingUploadImage.src = pendingUploadUrl;
+  });
 
-    image.src = imageUrl;
-    const cameraFeed = document.querySelector('#cameraFeed');
-    if (cameraFeed) {
-      cameraFeed.style.display = 'block';
-      cameraFeed.style.transform = 'none';
-    }
+  cropStage.addEventListener('pointerdown', (event) => {
+    if (!pendingUploadImage) return;
+    const imageBounds = cropPreview.getBoundingClientRect();
+    if (event.clientX < imageBounds.left || event.clientX > imageBounds.right || event.clientY < imageBounds.top || event.clientY > imageBounds.bottom) return;
+    cropStart = cropPoint(event);
+    uploadCrop = { x: cropStart.x, y: cropStart.y, w: 0, h: 0 };
+    cropStage.setPointerCapture(event.pointerId);
+  });
+
+  cropStage.addEventListener('pointermove', (event) => {
+    if (!cropStart) return;
+    const current = cropPoint(event);
+    uploadCrop = {
+      x: Math.min(cropStart.x, current.x),
+      y: Math.min(cropStart.y, current.y),
+      w: Math.abs(current.x - cropStart.x),
+      h: Math.abs(current.y - cropStart.y),
+    };
+    cropTouched = true;
+    updateCropSelection();
+  });
+
+  cropStage.addEventListener('pointerup', () => {
+    cropStart = null;
+    const validCrop = uploadCrop
+      && uploadCrop.w >= 0.15
+      && uploadCrop.h >= 0.15
+      && (uploadCrop.w < 0.999 || uploadCrop.h < 0.999);
+    analyzeCropButton.disabled = !cropTouched || !validCrop;
+  });
+
+  document.querySelector('#cancelCropButton').addEventListener('click', () => {
+    cropModal.hidden = true;
+    if (pendingUploadUrl) URL.revokeObjectURL(pendingUploadUrl);
+    pendingUploadImage = null;
+  });
+
+  analyzeCropButton.addEventListener('click', () => {
+    if (!pendingUploadImage || !uploadCrop || analyzeCropButton.disabled) return;
+    const source = document.createElement('canvas');
+    source.width = pendingUploadImage.naturalWidth;
+    source.height = pendingUploadImage.naturalHeight;
+    source.getContext('2d').drawImage(pendingUploadImage, 0, 0);
+    const crop = {
+      x: Math.round(uploadCrop.x * source.width),
+      y: Math.round(uploadCrop.y * source.height),
+      width: Math.round(uploadCrop.w * source.width),
+      height: Math.round(uploadCrop.h * source.height),
+    };
+    const capture = { frames: [cropFrame(source, crop)], backgroundRGB: sampleOutsideCrop(source, crop) };
+    cropModal.hidden = true;
+    URL.revokeObjectURL(pendingUploadUrl);
+    pendingUploadImage = null;
+    document.querySelector('#cameraFeed').style.display = 'none';
+    document.querySelector('#cameraPlaceholder').style.display = 'none';
+    document.querySelector('#cameraState').textContent = 'CROPPED IMAGE';
+    analyzeBadge(capture);
+  });
+
+  window.addEventListener('resize', updateCropSelection);
+  document.querySelector('#debugToggle').addEventListener('change', (event) => {
+    const overlay = document.querySelector('#roiDebugOverlay');
+    overlay.hidden = !event.target.checked || !lastDebugCapture;
+    if (event.target.checked && lastDebugCapture) drawDebugOverlay(lastDebugCapture.frame, lastDebugCapture.roiMedians);
   });
 
   document.querySelector('#clearForm').addEventListener('click', () => ['workerId', 'badgeId', 'shiftId'].forEach((id) => {
     const element = document.querySelector(`#${id}`);
     if (element) element.value = '';
   }));
-
-  document.querySelector('#settingsButton').addEventListener('click', () => alert(`Calibration profile ${ANALYSIS_VERSION}\nBand targets: ${H2S_BANDS.join(', ')} ppm\nConditions: 2 temp/humidity states per band\nSealed reference cell: drift compensation enabled\nConfidence: Lab distance to nearest band`));
 
   document.querySelector('#compareLeftSelect')?.addEventListener('change', updateComparisonSummary);
   document.querySelector('#compareRightSelect')?.addEventListener('change', updateComparisonSummary);
@@ -514,9 +839,26 @@ if (typeof document !== 'undefined') {
 if (typeof module !== 'undefined') {
   module.exports = {
     H2S_BANDS,
+    ROI_LAYOUT,
+    ROI_LAYOUT_VERSION,
+    ANALYSIS_VERSION,
+    ROI_MARGIN,
+    ROI_STDDEV_THRESHOLD,
+    CLIPPED_PIXEL_THRESHOLD,
+    BLUR_VARIANCE_THRESHOLD,
+    BACKGROUND_SIMILARITY_THRESHOLD,
     CALIBRATION_DATASET,
     estimateBandFromLab,
     summarizeReading,
+    shrinkRoi,
+    median,
+    sampleRoi,
+    medianAcrossFrames,
+    calculateBlurVariance,
+    calculateReading,
+    isVideoReady,
+    waitForVideoReady,
+    getGuideCrop,
     computeIncrementalExposure,
     computeCompensationFactor,
     estimateTemperatureHumidityFromDrift,
