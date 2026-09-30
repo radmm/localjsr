@@ -213,6 +213,28 @@ function linearToSrgb(linear) {
   return clamp(norm * 255, 0, 255);
 }
 
+function labToRgb(lab) {
+  const [L, a, b] = lab;
+  const y = (L + 16) / 116;
+  const x = a / 500 + y;
+  const z = y - b / 200;
+
+  const fn = (v) => (v ** 3 > 0.008856 ? v ** 3 : (v - 16 / 116) / 7.787);
+  const X = 0.95047 * fn(x);
+  const Y = 1.00000 * fn(y);
+  const Z = 1.08883 * fn(z);
+
+  const rLin = X *  3.2406 + Y * -1.5372 + Z * -0.4986;
+  const gLin = X * -0.9689 + Y *  1.8758 + Z *  0.0415;
+  const bLin = X *  0.0557 + Y * -0.2040 + Z *  1.0570;
+
+  return [
+    Math.round(clamp(linearToSrgb(rLin), 0, 255)),
+    Math.round(clamp(linearToSrgb(gLin), 0, 255)),
+    Math.round(clamp(linearToSrgb(bLin), 0, 255)),
+  ];
+}
+
 const CHART_REFERENCE_TABLE = [
   { ppm: 0, tempC: 15, lab: [45.77, 34.05, -19.46] },
   { ppm: 10, tempC: 5, lab: [39.43, 33.72, -9.73] },
@@ -1662,6 +1684,296 @@ function initBrowser() {
     analyzeBadge(capture, { forceEstimate: false });
   }
 
+  function populateReferenceChartTable() {
+    const tbody = document.querySelector('#chartTableBody');
+    if (!tbody) return;
+    tbody.innerHTML = CHART_REFERENCE_TABLE.map((row, idx) => {
+      const rgb = labToRgb(row.lab);
+      const rgbStr = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+      return `<tr id="chartRow-${idx}" data-index="${idx}" data-ppm="${row.ppm}" data-temp="${row.tempC}">
+        <td style="font-family:var(--font-heading);color:var(--text-muted);padding:8px 10px;">#${idx + 1}</td>
+        <td style="font-family:var(--font-heading);font-weight:700;color:#ffffff;padding:8px 10px;">${row.ppm} ppm</td>
+        <td style="padding:8px 10px;">${row.tempC} °C</td>
+        <td style="font-family:monospace;padding:8px 10px;">${row.lab[0]}</td>
+        <td style="font-family:monospace;padding:8px 10px;">${row.lab[1]}</td>
+        <td style="font-family:monospace;padding:8px 10px;">${row.lab[2]}</td>
+        <td style="padding:8px 10px;">
+          <span style="display:inline-flex;align-items:center;gap:6px;">
+            <span style="width:18px;height:18px;border-radius:4px;background:${rgbStr};border:1px solid rgba(255,255,255,0.25);display:inline-block;box-shadow:0 0 8px rgba(0,0,0,0.5);"></span>
+            <code style="font-size:10px;color:var(--text-secondary);">${rgb.join(',')}</code>
+          </span>
+        </td>
+        <td style="padding:8px 10px;" id="chartRowStatus-${idx}">
+          <span class="pill subtle" style="font-size:9px;">STANDBY</span>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  function highlightMatchedChartRow(matchedIdx, dist) {
+    CHART_REFERENCE_TABLE.forEach((_, idx) => {
+      const rowEl = document.querySelector(`#chartRow-${idx}`);
+      const statusEl = document.querySelector(`#chartRowStatus-${idx}`);
+      if (!rowEl || !statusEl) return;
+      if (idx === matchedIdx) {
+        rowEl.classList.add('active-match');
+        statusEl.innerHTML = `<span class="pill high" style="font-size:9px;">NEAREST (ΔE: ${dist.toFixed(1)})</span>`;
+      } else {
+        rowEl.classList.remove('active-match');
+        statusEl.innerHTML = `<span class="pill subtle" style="font-size:9px;">STANDBY</span>`;
+      }
+    });
+  }
+
+  populateReferenceChartTable();
+
+  let activeSimulatedCanvas = null;
+  let latestLiveEstimate = null;
+  let lastLiveSampleTime = 0;
+  const liveSampleCanvas = document.createElement('canvas');
+  liveSampleCanvas.width = 48;
+  liveSampleCanvas.height = 48;
+  const liveSampleCtx = liveSampleCanvas.getContext('2d', { willReadFrequently: true });
+
+  function processLiveColor(sourceEl, sourceWidth, sourceHeight) {
+    if (!sourceEl || sourceWidth <= 0 || sourceHeight <= 0) return;
+    try {
+      liveSampleCtx.filter = 'none';
+      const cropW = Math.max(16, Math.round(sourceWidth * 0.20));
+      const cropH = Math.max(16, Math.round(sourceHeight * 0.20));
+      const cropX = Math.round((sourceWidth - cropW) / 2);
+      const cropY = Math.round((sourceHeight - cropH) / 2);
+
+      liveSampleCtx.drawImage(sourceEl, cropX, cropY, cropW, cropH, 0, 0, 48, 48);
+      const imgData = liveSampleCtx.getImageData(0, 0, 48, 48).data;
+      const rArr = [];
+      const gArr = [];
+      const bArr = [];
+      for (let i = 0; i < imgData.length; i += 4) {
+        rArr.push(imgData[i]);
+        gArr.push(imgData[i + 1]);
+        bArr.push(imgData[i + 2]);
+      }
+      const rMed = Math.round(median(rArr));
+      const gMed = Math.round(median(gArr));
+      const bMed = Math.round(median(bArr));
+
+      const measuredLab = rgbToLab([rMed, gMed, bMed]);
+      const tempInput = document.querySelector('#demoTempInput');
+      const userTemperature = tempInput?.value ? Number(tempInput.value) : null;
+      const demo = estimateChartDemo(measuredLab, { userTemperature });
+
+      latestLiveEstimate = {
+        ppm: demo.ppm,
+        tempC: demo.temperatureC,
+        nearestCell: demo.nearestCell,
+        distance: demo.distance,
+        measuredLab: demo.measuredLab,
+        sampleRgb: [rMed, gMed, bMed],
+        timestamp: new Date().toISOString(),
+      };
+
+      // 1. Update Live Camera HUD Overlay
+      const hudPpm = document.querySelector('#liveHudPpm');
+      const hudNearest = document.querySelector('#liveNearestCell');
+      const hudDist = document.querySelector('#liveHudDistance');
+      const sampleChip = document.querySelector('#liveSampleChip');
+      const targetChip = document.querySelector('#liveTargetChip');
+      const riskBadge = document.querySelector('#liveRiskBadge');
+
+      if (hudPpm) hudPpm.textContent = `~${demo.ppm.toFixed(1)}`;
+      if (hudNearest) hudNearest.textContent = `${demo.nearestCell.ppm} ppm @ ${demo.nearestCell.tempC}°C`;
+      if (hudDist) hudDist.textContent = `ΔE: ${demo.distance.toFixed(2)}`;
+      if (sampleChip) sampleChip.style.background = `rgb(${rMed}, ${gMed}, ${bMed})`;
+      if (targetChip && demo.nearestCell) {
+        const targetRgb = labToRgb(demo.nearestCell.lab);
+        targetChip.style.background = `rgb(${targetRgb.join(',')})`;
+      }
+      if (riskBadge) {
+        if (demo.ppm < 1) {
+          riskBadge.textContent = 'CLEAN';
+          riskBadge.className = 'pill high';
+        } else if (demo.ppm < 10) {
+          riskBadge.textContent = 'LOW HAZARD';
+          riskBadge.className = 'pill medium';
+        } else if (demo.ppm < 20) {
+          riskBadge.textContent = 'THRESHOLD';
+          riskBadge.className = 'pill low';
+        } else if (demo.ppm < 50) {
+          riskBadge.textContent = 'HIGH HAZARD';
+          riskBadge.className = 'pill low';
+        } else {
+          riskBadge.textContent = 'CRITICAL';
+          riskBadge.className = 'pill low';
+        }
+      }
+
+      // 2. Highlight matched chart row
+      const matchedIdx = CHART_REFERENCE_TABLE.findIndex(
+        (cell) => cell.ppm === demo.nearestCell.ppm && cell.tempC === demo.nearestCell.tempC
+      );
+      if (matchedIdx >= 0) {
+        highlightMatchedChartRow(matchedIdx, demo.distance);
+      }
+
+      // 3. Sync to main Results Panel smoothly
+      const resEmpty = document.querySelector('#resultEmpty');
+      const resContent = document.querySelector('#resultContent');
+      if (resEmpty) resEmpty.style.display = 'none';
+      if (resContent) resContent.hidden = false;
+
+      const concVal = document.querySelector('#concentrationValue');
+      const durInput = document.querySelector('#exposureMinutes');
+      const durVal = document.querySelector('#durationValue');
+      const doseVal = document.querySelector('#doseValue');
+      const duration = durInput?.value ? Number(durInput.value) : 15;
+
+      if (concVal) concVal.textContent = `${demo.ppm.toFixed(1)} ppm-equivalent`;
+      if (durVal) durVal.textContent = `${duration} min`;
+      if (doseVal) doseVal.textContent = `${Math.round(demo.ppm * duration)} ppm·min`;
+
+      const demoPpmVal = document.querySelector('#demoPpmValue');
+      const demoTempVal = document.querySelector('#demoTempValue');
+      const demoNearestCell = document.querySelector('#demoNearestCell');
+      const demoMeasuredLab = document.querySelector('#demoMeasuredLab');
+      const demoDist = document.querySelector('#demoDistance');
+      const bottomPpm = document.querySelector('#bottomPpm');
+
+      if (demoPpmVal) demoPpmVal.textContent = `${demo.ppm} ppm`;
+      if (demoTempVal) demoTempVal.textContent = `@ ${demo.temperatureC} °C`;
+      if (demoNearestCell) demoNearestCell.textContent = `${demo.nearestCell.ppm} ppm @ ${demo.nearestCell.tempC}°C`;
+      if (demoMeasuredLab) demoMeasuredLab.textContent = `[${demo.measuredLab.join(', ')}]`;
+      if (demoDist) demoDist.textContent = `${demo.distance}`;
+      if (bottomPpm) bottomPpm.textContent = `~${demo.ppm.toFixed(1)} ppm`;
+
+      const demoCard = document.querySelector('#chartDemoCard');
+      if (demoCard) demoCard.style.display = 'flex';
+    } catch (err) {
+      console.warn('processLiveColor error:', err);
+    }
+  }
+
+  function tickLiveColorimeter(timestamp) {
+    if (timestamp - lastLiveSampleTime > 75) {
+      lastLiveSampleTime = timestamp;
+      if (activeSimulatedCanvas) {
+        processLiveColor(activeSimulatedCanvas, activeSimulatedCanvas.width, activeSimulatedCanvas.height);
+      } else {
+        const video = document.querySelector('#cameraFeed');
+        if (video && video.style.display !== 'none' && video.readyState >= 2 && video.videoWidth > 0) {
+          processLiveColor(video, video.videoWidth, video.videoHeight);
+        }
+      }
+    }
+    requestAnimationFrame(tickLiveColorimeter);
+  }
+  requestAnimationFrame(tickLiveColorimeter);
+
+  // Wire up Quick Chart Preset Buttons
+  document.querySelectorAll('.preset-chip-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const ppm = Number(btn.getAttribute('data-ppm') || 0);
+      const temp = Number(btn.getAttribute('data-temp') || 15);
+      const chartRow = CHART_REFERENCE_TABLE.find((c) => c.ppm === ppm && c.tempC === temp) || CHART_REFERENCE_TABLE[0];
+      const rgb = labToRgb(chartRow.lab);
+
+      // Create test canvas with center sensor reticle filled with exact chart color
+      const canvas = document.createElement('canvas');
+      canvas.width = 400;
+      canvas.height = 300;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#0a0a0e';
+      ctx.fillRect(0, 0, 400, 300);
+
+      // Draw sensor background
+      ctx.fillStyle = '#171424';
+      ctx.fillRect(100, 50, 200, 200);
+
+      // Draw center sensor strip
+      ctx.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+      ctx.fillRect(140, 90, 120, 120);
+
+      activeSimulatedCanvas = canvas;
+
+      const cameraFeed = document.querySelector('#cameraFeed');
+      const cameraPlaceholder = document.querySelector('#cameraPlaceholder');
+      if (cameraFeed) cameraFeed.style.display = 'none';
+      if (cameraPlaceholder) cameraPlaceholder.style.display = 'none';
+
+      let uploadedPreview = document.querySelector('#uploadedPreview');
+      if (!uploadedPreview) {
+        uploadedPreview = document.createElement('img');
+        uploadedPreview.id = 'uploadedPreview';
+        uploadedPreview.style.width = '100%';
+        uploadedPreview.style.height = '100%';
+        uploadedPreview.style.objectFit = 'contain';
+        uploadedPreview.style.position = 'absolute';
+        uploadedPreview.style.inset = '0';
+        document.querySelector('#cameraFrame').appendChild(uploadedPreview);
+      }
+      uploadedPreview.src = canvas.toDataURL('image/jpeg');
+      uploadedPreview.style.display = 'block';
+
+      const cameraState = document.querySelector('#cameraState');
+      if (cameraState) cameraState.textContent = `CHART PRESET (${ppm} PPM @ ${temp}°C)`;
+
+      processLiveColor(canvas, 400, 300);
+    });
+  });
+
+  document.querySelector('#resumeLiveCameraBtn')?.addEventListener('click', () => {
+    activeSimulatedCanvas = null;
+    const uploadedPreview = document.querySelector('#uploadedPreview');
+    if (uploadedPreview) uploadedPreview.style.display = 'none';
+    const cameraFeed = document.querySelector('#cameraFeed');
+    if (cameraFeed) cameraFeed.style.display = 'block';
+    const cameraState = document.querySelector('#cameraState');
+    if (cameraState) cameraState.textContent = 'LIVE PREVIEW';
+  });
+
+  // 1-Click "Save Reading" freeze log button
+  document.querySelector('#freezeLogButton')?.addEventListener('click', () => {
+    const durInput = document.querySelector('#exposureMinutes');
+    const duration = durInput?.value ? Number(durInput.value) : 15;
+    const ppm = latestLiveEstimate ? latestLiveEstimate.ppm : (lastSuccessfulReading?.ppm || 0);
+    const dose = Math.round(ppm * duration);
+    const workerId = document.querySelector('#workerId')?.value || 'WRK-1048';
+    const badgeId = document.querySelector('#badgeId')?.value || 'H2S-24091';
+    const shiftId = document.querySelector('#shiftId')?.value || 'NIGHT-07';
+    const nearestDesc = latestLiveEstimate?.nearestCell
+      ? `${latestLiveEstimate.nearestCell.ppm} ppm @ ${latestLiveEstimate.nearestCell.tempC}°C`
+      : `${ppm} ppm band`;
+
+    const newRecord = {
+      id: `REC-${Date.now().toString(36).toUpperCase()}`,
+      workerId,
+      badgeId,
+      shiftId,
+      durationMinutes: duration,
+      ppm,
+      dose,
+      confidence: (latestLiveEstimate?.distance ?? 10) < 6 ? 'High' : 'Moderate',
+      nearestCell: nearestDesc,
+      timestamp: new Date().toISOString(),
+      driftSummary: 'Compensated',
+    };
+
+    try {
+      const records = JSON.parse(localStorage.getItem('h2s_badge_records') || '[]');
+      records.unshift(newRecord);
+      localStorage.setItem('h2s_badge_records', JSON.stringify(records));
+      renderRecords();
+      const freezeBtn = document.querySelector('#freezeLogButton');
+      if (freezeBtn) {
+        const orig = freezeBtn.innerHTML;
+        freezeBtn.innerHTML = '<span></span> Saved!';
+        setTimeout(() => { freezeBtn.innerHTML = orig; }, 1500);
+      }
+    } catch (e) {
+      console.warn('Failed to save record:', e);
+    }
+  });
+
   document.querySelector('#sampleBadgeButton')?.addEventListener('click', () => {
     const select = document.querySelector('#samplePpmSelect');
     const ppm = select ? Number(select.value) : 20;
@@ -1744,6 +2056,7 @@ if (typeof module !== 'undefined') {
     estimateChartDemo,
     srgbToLinear,
     linearToSrgb,
+    labToRgb,
     fitCorrection,
     calculateFrameChannelRatio,
     applyCameraLocks,

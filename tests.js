@@ -14,6 +14,7 @@ const {
   estimateChartDemo,
   srgbToLinear,
   linearToSrgb,
+  labToRgb,
   fitCorrection,
   calculateFrameChannelRatio,
   applyCameraLocks,
@@ -351,6 +352,15 @@ assert.ok(savedRec.crossCheck);
   const lin = srgbToLinear(val);
   const roundTrip = linearToSrgb(lin);
   assert.ok(Math.abs(roundTrip - val) < 0.02, `Round trip for ${val} failed: got ${roundTrip}`);
+});
+
+// 7b. Lab to RGB conversion tests
+CHART_REFERENCE_TABLE.forEach((row, idx) => {
+  const rgb = labToRgb(row.lab);
+  assert.equal(rgb.length, 3);
+  rgb.forEach((c) => {
+    assert.ok(c >= 0 && c <= 255, `RGB channel ${c} out of range for chart row ${idx}`);
+  });
 });
 
 // --- 8. Chart Demo Mode Tests ---
