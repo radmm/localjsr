@@ -26,6 +26,13 @@ app.get('/manifest.webmanifest', (req, res) => {
   res.sendFile(path.join(__dirname, 'manifest.webmanifest'));
 });
 
+// Explicit route for models/badge-detector-v1.json
+app.get('/models/badge-detector-v1.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'models', 'badge-detector-v1.json'));
+});
+
 // Serve static files from root directory
 app.use(express.static(path.join(__dirname, '.'), {
   etag: false,
@@ -35,6 +42,9 @@ app.use(express.static(path.join(__dirname, '.'), {
       res.setHeader('Cache-Control', 'no-cache');
     } else if (filePath.endsWith('.webmanifest')) {
       res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+    } else if (filePath.endsWith('.json')) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache');
     } else if (filePath.endsWith('.html') || filePath.endsWith('.js') || filePath.endsWith('.css')) {
       res.setHeader('Cache-Control', 'no-cache');

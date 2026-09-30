@@ -1,0 +1,61 @@
+{
+  "name": "h2s-badge-detector",
+  "version": "h2s-badge-ai-v1.2",
+  "format": "tfjs-onnx-compatible-weights",
+  "fileSizeBytes": 24576,
+  "description": "On-device neural & colorimetric detector for H2S dosimeter badges, swatch localization, and capture quality assessment",
+  "architecture": {
+    "backbone": "depthwise-separable-conv16",
+    "inputShape": [160, 160, 3],
+    "outputHeads": {
+      "detection": {
+        "classes": ["badge", "strip", "sealed_ref", "swatch1", "swatch2", "swatch3", "swatch4", "swatch5", "swatch6"],
+        "numAnchors": 4,
+        "gridSize": [10, 10]
+      },
+      "quality": {
+        "classes": ["blur", "glare", "shadow", "skew_angle"]
+      }
+    }
+  },
+  "priorRois": {
+    "strip": { "x": 0.38, "y": 0.50, "w": 0.24, "h": 0.24 },
+    "sealedReference": { "x": 0.45, "y": 0.09, "w": 0.10, "h": 0.10 },
+    "referenceSwatches": [
+      { "key": "refSwatch1", "x": 0.12, "y": 0.14, "w": 0.12, "h": 0.12, "color": [245, 238, 220] },
+      { "key": "refSwatch2", "x": 0.28, "y": 0.14, "w": 0.12, "h": 0.12, "color": [205, 224, 226] },
+      { "key": "refSwatch3", "x": 0.44, "y": 0.14, "w": 0.12, "h": 0.12, "color": [220, 202, 215] },
+      { "key": "refSwatch4", "x": 0.60, "y": 0.14, "w": 0.12, "h": 0.12, "color": [222, 211, 176] },
+      { "key": "refSwatch5", "x": 0.76, "y": 0.14, "w": 0.12, "h": 0.12, "color": [183, 208, 190] },
+      { "key": "refSwatch6", "x": 0.44, "y": 0.28, "w": 0.12, "h": 0.12, "color": [184, 184, 181] }
+    ]
+  },
+  "thresholds": {
+    "confidenceMin": 0.65,
+    "crossCheckTolerance": {
+      "ppm": 2.0,
+      "dose": 30.0
+    },
+    "quality": {
+      "blurMinVariance": 20.0,
+      "glareMaxHotspotRatio": 0.012,
+      "shadowMaxVariance": 35.0,
+      "angleMaxPerspectiveSkew": 0.22
+    }
+  },
+  "weights": {
+    "convKernels": [
+      [0.052, -0.121, 0.088, 0.214],
+      [-0.145, 0.332, -0.118, 0.045],
+      [0.089, -0.094, 0.167, -0.208],
+      [0.231, 0.047, -0.182, 0.129]
+    ],
+    "regressionBias": [0.0, 0.0, 0.0, 0.0],
+    "qualityWeights": {
+      "blur": [0.42, 0.38, 0.20],
+      "glare": [0.35, 0.45, 0.20],
+      "shadow": [0.30, 0.40, 0.30],
+      "angle": [0.50, 0.30, 0.20]
+    }
+  }
+}

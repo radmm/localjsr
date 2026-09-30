@@ -9,6 +9,20 @@ const CLIPPED_PIXEL_THRESHOLD = 0.02;
 const BLUR_VARIANCE_THRESHOLD = 20;
 const BACKGROUND_SIMILARITY_THRESHOLD = 10;
 const H2S_BANDS = [0, 1, 2, 5, 10, 20, 50, 100];
+
+let AiDetectorModule = null;
+if (typeof require !== 'undefined') {
+  try {
+    AiDetectorModule = require('./ai-detector.js');
+  } catch (e) {
+    // browser or bundle
+  }
+}
+
+function getAiDetector() {
+  if (typeof window !== 'undefined' && window.AiDetector) return window.AiDetector;
+  return AiDetectorModule;
+}
 const ROI_LAYOUT = {
   strip: { x: 0.38, y: 0.50, w: 0.24, h: 0.24 },
   referenceSwatches: [
@@ -328,15 +342,17 @@ function refuseReading(message, quality = 0, diagnostics = {}) {
   return { valid: false, refusalReason: message, quality, ...diagnostics };
 }
 
-function calculateReading(frames, { backgroundRGB = null } = {}) {
+function calculateReading(frames, { backgroundRGB = null, rois = null } = {}) {
   if (!frames?.length || frames.some((frame) => !frame?.width || !frame?.height)) {
     return refuseReading('Badge crop unavailable. Align the badge and try again.');
   }
 
+  const activeRois = rois || ROI_LAYOUT;
+  const activeSwatches = activeRois.referenceSwatches || REFERENCE_SWATCHES;
   const allRois = [
-    { key: 'strip', ...ROI_LAYOUT.strip },
-    ...REFERENCE_SWATCHES,
-    { key: 'sealedReference', ...ROI_LAYOUT.sealedReference },
+    { key: 'strip', ...activeRois.strip },
+    ...activeSwatches,
+    { key: 'sealedReference', ...activeRois.sealedReference },
   ];
   const perFrame = frames.map((frame) => {
     const context = frame.getContext('2d');
@@ -348,7 +364,7 @@ function calculateReading(frames, { backgroundRGB = null } = {}) {
   ]));
   const diagnostics = {
     roiMedians,
-    roiLayoutVersion: ROI_LAYOUT_VERSION,
+    roiLayoutVersion: activeRois.version || ROI_LAYOUT_VERSION,
     thumbnail: createThumbnail(frames[0]),
   };
   for (const frameSamples of perFrame) {
@@ -365,9 +381,9 @@ function calculateReading(frames, { backgroundRGB = null } = {}) {
     return refuseReading('Badge not aligned; strip matches background', 0, diagnostics);
   }
 
-  const referenceReadings = REFERENCE_SWATCHES.map((swatch) => roiMedians[swatch.key]);
+  const referenceReadings = activeSwatches.map((swatch) => roiMedians[swatch.key]);
   const correct = fitCorrection(referenceReadings);
-  const residual = Math.sqrt(referenceReadings.reduce((total, reading, index) => total + distance(correct(reading), REFERENCE_SWATCHES[index].color) ** 2, 0) / referenceReadings.length);
+  const residual = Math.sqrt(referenceReadings.reduce((total, reading, index) => total + distance(correct(reading), activeSwatches[index].color) ** 2, 0) / referenceReadings.length);
   if (residual > REFERENCE_ERROR_THRESHOLD) return refuseReading(`Reference correction failed (${residual.toFixed(1)} RGB RMS)`, residual, diagnostics);
 
   const stripRGB = correct(roiMedians.strip);
@@ -451,7 +467,7 @@ function renderRecords() {
     <td class="worker-cell"><strong>${record.workerId}</strong><small>${record.badgeId}</small></td>
     <td>${record.shiftId}</td>
     <td><strong>${record.concentrationBandEstimate || '0 ppm-equivalent'}</strong>${versionFlag}</td>
-    <td><strong>${record.dose.toFixed(1)}</strong> ppm·min</td>
+    <td><strong>${Number(record.dose || 0).toFixed(1)}</strong> ppm·min</td>
     <td><span class="pill ${record.confidenceLevel ? record.confidenceLevel.toLowerCase() : 'medium'}">${record.confidenceLevel || 'Medium'}</span></td>
     <td><span class="pill subtle">${record.tempHumidityDriftFlag || 'Low drift'}</span></td>
   </tr>`;
@@ -554,7 +570,7 @@ function sampleOutsideCrop(source, crop) {
   return channels[0].length ? channels.map(median) : null;
 }
 
-function drawDebugOverlay(frame, roiMedians) {
+function drawDebugOverlay(frame, roiMedians, aiDetection = null) {
   const overlay = document.querySelector('#roiDebugOverlay');
   if (!overlay) return;
   overlay.width = frame.width;
@@ -562,18 +578,50 @@ function drawDebugOverlay(frame, roiMedians) {
   const context = overlay.getContext('2d');
   context.clearRect(0, 0, overlay.width, overlay.height);
   context.drawImage(frame, 0, 0);
-  const rois = [{ key: 'strip', ...ROI_LAYOUT.strip }, ...REFERENCE_SWATCHES, { key: 'sealedReference', ...ROI_LAYOUT.sealedReference }];
+
+  // Draw AI detected badge bounding box and corners
+  if (aiDetection?.badgeBounds) {
+    const bb = aiDetection.badgeBounds;
+    const bx = bb.x * overlay.width;
+    const by = bb.y * overlay.height;
+    const bw = bb.w * overlay.width;
+    const bh = bb.h * overlay.height;
+    context.strokeStyle = aiDetection.fallbackUsed ? '#f59e0b' : '#a855f7';
+    context.lineWidth = Math.max(3, overlay.width / 250);
+    context.setLineDash([6, 4]);
+    context.strokeRect(bx, by, bw, bh);
+    context.setLineDash([]);
+
+    const badgeLabel = aiDetection.fallbackUsed
+      ? `Guide Fallback (${(aiDetection.confidence * 100).toFixed(0)}% conf)`
+      : `AI Badge Detected (${(aiDetection.confidence * 100).toFixed(0)}% conf)`;
+    context.font = `bold ${Math.max(12, overlay.width / 55)}px monospace`;
+    const labelW = context.measureText(badgeLabel).width + 12;
+    context.fillStyle = 'rgba(18, 16, 26, 0.88)';
+    context.fillRect(bx, Math.max(0, by - 22), labelW, 20);
+    context.fillStyle = aiDetection.fallbackUsed ? '#fbbf24' : '#c084fc';
+    context.fillText(badgeLabel, bx + 6, Math.max(14, by - 7));
+  }
+
+  const activeRois = aiDetection?.rois || ROI_LAYOUT;
+  const activeSwatches = activeRois.referenceSwatches || REFERENCE_SWATCHES;
+  const rois = [
+    { key: 'strip', ...activeRois.strip },
+    ...activeSwatches,
+    { key: 'sealedReference', ...activeRois.sealedReference },
+  ];
   rois.forEach((roi) => {
     const inner = shrinkRoi(roi);
     const x = inner.x * overlay.width;
     const y = inner.y * overlay.height;
     const width = inner.w * overlay.width;
     const height = inner.h * overlay.height;
-    const label = `${roi.key}: ${roiMedians[roi.key].map((channel) => Math.round(channel)).join(',')}`;
+    const medianColor = roiMedians?.[roi.key] ? roiMedians[roi.key].map((channel) => Math.round(channel)).join(',') : '';
+    const label = `${roi.key}${medianColor ? `: ${medianColor}` : ''}`;
     context.strokeStyle = roi.key === 'strip' ? '#d9ee55' : roi.key === 'sealedReference' ? '#e77760' : '#69b8db';
     context.lineWidth = Math.max(2, overlay.width / 500);
     context.strokeRect(x, y, width, height);
-    context.font = `${Math.max(12, overlay.width / 90)}px sans-serif`;
+    context.font = `${Math.max(11, overlay.width / 95)}px sans-serif`;
     const labelY = y > overlay.height * 0.08 ? y - 5 : y + height + 16;
     context.fillStyle = 'rgba(0,0,0,.78)';
     context.fillRect(x, labelY - 14, Math.min(context.measureText(label).width + 8, overlay.width - x), 18);
@@ -582,12 +630,12 @@ function drawDebugOverlay(frame, roiMedians) {
   });
 }
 
-function showDebugCapture(frame, roiMedians) {
-  lastDebugCapture = { frame, roiMedians };
+function showDebugCapture(frame, roiMedians, aiDetection = null) {
+  lastDebugCapture = { frame, roiMedians, aiDetection };
   const overlay = document.querySelector('#roiDebugOverlay');
-  const enabled = document.querySelector('#debugToggle').checked;
-  overlay.hidden = !enabled;
-  if (enabled) drawDebugOverlay(frame, roiMedians);
+  const enabled = document.querySelector('#debugToggle')?.checked;
+  if (overlay) overlay.hidden = !enabled;
+  if (enabled) drawDebugOverlay(frame, roiMedians, aiDetection);
 }
 
 let lastCaptureForRetry = null;
@@ -713,13 +761,45 @@ function showRefusal(message) {
 function analyzeBadge(capture, { forceEstimate = false } = {}) {
   lastCaptureForRetry = capture;
   showAnalysis();
-  let reading = calculateReading(capture.frames, { backgroundRGB: capture.backgroundRGB });
+
+  const detector = getAiDetector();
+  let aiDetection = null;
+  let quality = null;
+  let crossCheck = null;
+
+  if (detector && capture.frames?.[0]) {
+    aiDetection = detector.detectBadge(capture.frames[0]);
+    quality = detector.assessCaptureQuality(capture.frames[0], aiDetection);
+  }
+
   const permissive = forceEstimate || (typeof document !== 'undefined' && Boolean(document.querySelector('#permissiveToggle')?.checked));
+
+  // 1. Capture quality gate: specific retake message on blur, glare, shadow, bad angle
+  if (quality && !quality.passed && !permissive) {
+    if (aiDetection?.rois) showDebugCapture(capture.frames[0], null, aiDetection);
+    showRefusal(quality.retakeMessage);
+    return;
+  }
+
+  // 2. Side-by-side execution: Classical pipeline vs AI-detected ROIs pipeline
+  const classicalReading = calculateReading(capture.frames, { backgroundRGB: capture.backgroundRGB, rois: null });
+  const activeAiRois = aiDetection?.rois || null;
+  const aiReading = activeAiRois
+    ? calculateReading(capture.frames, { backgroundRGB: capture.backgroundRGB, rois: activeAiRois })
+    : classicalReading;
+
+  // 3. Cross-check side by side
+  if (detector && classicalReading.valid && aiReading.valid) {
+    crossCheck = detector.runCrossCheck(classicalReading, aiReading);
+  }
+
+  // Select primary reading: prefer AI when confident & valid, else classical
+  let reading = (aiDetection && !aiDetection.fallbackUsed && aiReading.valid) ? aiReading : classicalReading;
 
   if (!reading.valid && permissive) {
     reading = computeBestEffortReading(capture, reading);
   } else if (!reading.valid) {
-    if (reading.roiMedians) showDebugCapture(capture.frames[0], reading.roiMedians);
+    if (reading.roiMedians) showDebugCapture(capture.frames[0], reading.roiMedians, aiDetection);
     showRefusal(reading.refusalReason);
     return;
   }
@@ -745,6 +825,13 @@ function analyzeBadge(capture, { forceEstimate = false } = {}) {
     compensationFactor: reading.compensationFactor,
     temperatureC: reading.temperatureC,
     humidityPct: reading.humidityPct,
+    modelVersion: aiDetection?.modelVersion || 'classical-v1.6',
+    detectedRois: aiDetection?.rois || ROI_LAYOUT,
+    detectionConfidence: aiDetection?.confidence ?? 1.0,
+    fallbackUsed: Boolean(aiDetection?.fallbackUsed),
+    aiQualityScores: quality?.scores || null,
+    crossCheck: crossCheck || null,
+    crossCheckDisagreed: Boolean(crossCheck?.disagreed),
   };
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify([...records(), record]));
@@ -776,8 +863,43 @@ function analyzeBadge(capture, { forceEstimate = false } = {}) {
   if (thresholdResult) thresholdResult.textContent = record.dose <= THRESHOLD ? 'Within limit' : 'Over limit';
   if (thresholdCard) thresholdCard.className = `status-card ${record.dose <= THRESHOLD ? '' : 'warning'}`;
 
+  const aiStatusCard = document.querySelector('#aiStatusCard');
+  const aiStatusValue = document.querySelector('#aiStatusValue');
+  const aiStatusDetail = document.querySelector('#aiStatusDetail');
+  if (aiStatusCard && aiDetection) {
+    aiStatusCard.style.display = 'flex';
+    if (aiDetection.fallbackUsed) {
+      if (aiStatusValue) aiStatusValue.textContent = 'Guide Fallback';
+      if (aiStatusDetail) aiStatusDetail.textContent = `AI confidence ${(aiDetection.confidence * 100).toFixed(0)}% < 65% limit; guide frame applied`;
+      aiStatusCard.className = 'status-card warning';
+    } else {
+      if (aiStatusValue) aiStatusValue.textContent = 'AI Guided';
+      if (aiStatusDetail) aiStatusDetail.textContent = `${(aiDetection.confidence * 100).toFixed(0)}% confidence • ${aiDetection.modelVersion}`;
+      aiStatusCard.className = 'status-card';
+    }
+  }
+
+  const crossCheckCard = document.querySelector('#crossCheckCard');
+  const crossCheckValue = document.querySelector('#crossCheckValue');
+  const crossCheckDetail = document.querySelector('#crossCheckDetail');
+  if (crossCheckCard) {
+    if (crossCheck?.disagreed) {
+      crossCheckCard.style.display = 'flex';
+      crossCheckCard.className = 'status-card invalid';
+      if (crossCheckValue) crossCheckValue.textContent = 'Cross-Check Alert';
+      if (crossCheckDetail) crossCheckDetail.textContent = crossCheck.flagMessage;
+    } else if (crossCheck?.agreed) {
+      crossCheckCard.style.display = 'flex';
+      crossCheckCard.className = 'status-card';
+      if (crossCheckValue) crossCheckValue.textContent = 'Cross-Check OK';
+      if (crossCheckDetail) crossCheckDetail.textContent = `AI (${crossCheck.aiPpm} ppm) & Classical (${crossCheck.classicalPpm} ppm) agree`;
+    } else {
+      crossCheckCard.style.display = 'none';
+    }
+  }
+
   const debugToggle = document.querySelector('#debugToggle');
-  if (debugToggle?.checked) showDebugCapture(capture.frames[0], reading.roiMedians);
+  if (debugToggle?.checked) showDebugCapture(capture.frames[0], reading.roiMedians, aiDetection);
   renderRecords();
   const resultPanel = document.querySelector('#resultPanel');
   if (resultPanel) resultPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1095,7 +1217,9 @@ function initBrowser() {
   document.querySelector('#debugToggle').addEventListener('change', (event) => {
     const overlay = document.querySelector('#roiDebugOverlay');
     overlay.hidden = !event.target.checked || !lastDebugCapture;
-    if (event.target.checked && lastDebugCapture) drawDebugOverlay(lastDebugCapture.frame, lastDebugCapture.roiMedians);
+    if (event.target.checked && lastDebugCapture) {
+      drawDebugOverlay(lastDebugCapture.frame, lastDebugCapture.roiMedians, lastDebugCapture.aiDetection);
+    }
   });
 
   document.querySelector('#clearForm').addEventListener('click', () => ['workerId', 'badgeId', 'shiftId'].forEach((id) => {
@@ -1144,5 +1268,8 @@ if (typeof module !== 'undefined') {
     distance,
     createCalibratedBadgeCanvas,
     computeBestEffortReading,
+    getAiDetector,
+    analyzeBadge,
+    drawDebugOverlay,
   };
 }

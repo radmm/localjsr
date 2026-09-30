@@ -1,9 +1,11 @@
-const CACHE_NAME = 'h2s-badge-reader-v2';
+const CACHE_NAME = 'h2s-badge-reader-v3';
 
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
   '/app.js',
+  '/ai-detector.js',
+  '/models/badge-detector-v1.json',
   '/style.css',
   '/manifest.webmanifest',
   '/icons/icon-192.png',

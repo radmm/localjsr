@@ -196,6 +196,146 @@ assert.equal(backgroundFailure.refusalReason, 'Badge not aligned; strip matches 
 const referenceFailure = calculateReading([syntheticBadge({ badReferences: true })]);
 assert.match(referenceFailure.refusalReason, /^Reference correction failed/);
 
+// --- Offline AI Tests ---
+const aiDetector = require('./ai-detector.js');
+
+// 1. AI Detector - High confidence on clean synthetic badge
+const cleanBadgeFrame = syntheticBadge();
+const highConfDetection = aiDetector.detectBadge(cleanBadgeFrame);
+assert.equal(highConfDetection.detected, true);
+assert.equal(highConfDetection.fallbackUsed, false);
+assert.ok(highConfDetection.confidence >= 0.65);
+assert.ok(highConfDetection.rois.strip);
+assert.equal(highConfDetection.rois.referenceSwatches.length, 6);
+
+// 2. AI Detector - Low confidence triggers fallback path
+const randomFrame = {
+  width: 320,
+  height: 240,
+  getContext: () => ({
+    getImageData: () => ({
+      data: new Uint8ClampedArray(320 * 240 * 4).fill(120),
+      width: 320,
+      height: 240,
+    }),
+  }),
+};
+const lowConfDetection = aiDetector.detectBadge(randomFrame);
+assert.equal(lowConfDetection.detected, false);
+assert.equal(lowConfDetection.fallbackUsed, true);
+assert.ok(lowConfDetection.confidence < 0.65);
+assert.ok(lowConfDetection.reason.includes('fell back to guide frame'));
+assert.deepEqual(lowConfDetection.rois.strip, ROI_LAYOUT.strip);
+
+// 3. Capture Quality Scorer Tests
+// 3a. Blur detection
+const blurQuality = aiDetector.assessCaptureQuality(syntheticBadge({ uniform: true }));
+assert.equal(blurQuality.passed, false);
+assert.equal(blurQuality.failReason, 'blur');
+assert.ok(blurQuality.retakeMessage.includes('blurry'));
+
+// 3b. Glare detection
+const glareBadge = syntheticBadge();
+const glareData = glareBadge.pixels;
+for (let y = 100; y < 140; y += 1) {
+  for (let x = 100; x < 150; x += 1) {
+    const idx = (y * 320 + x) * 4;
+    glareData[idx] = 255;
+    glareData[idx + 1] = 255;
+    glareData[idx + 2] = 255;
+  }
+}
+const glareQuality = aiDetector.assessCaptureQuality(glareBadge);
+assert.equal(glareQuality.passed, false);
+assert.equal(glareQuality.failReason, 'glare');
+assert.ok(glareQuality.retakeMessage.includes('Glare detected'));
+
+// 3c. Shadow detection
+const shadowBadge = syntheticBadge();
+const shadowData = shadowBadge.pixels;
+for (let y = 120; y < 240; y += 1) {
+  for (let x = 160; x < 320; x += 1) {
+    const idx = (y * 320 + x) * 4;
+    shadowData[idx] = 10;
+    shadowData[idx + 1] = 10;
+    shadowData[idx + 2] = 10;
+  }
+}
+const shadowQuality = aiDetector.assessCaptureQuality(shadowBadge);
+assert.equal(shadowQuality.passed, false);
+assert.equal(shadowQuality.failReason, 'shadow');
+assert.ok(shadowQuality.retakeMessage.includes('shadow'));
+
+// 3d. Bad angle detection
+const badAngleDetection = {
+  corners: [
+    { x: 0.1, y: 0.05 },
+    { x: 0.9, y: 0.05 },
+    { x: 0.6, y: 0.95 },
+    { x: 0.4, y: 0.95 },
+  ],
+};
+const angleQuality = aiDetector.assessCaptureQuality(syntheticBadge(), badAngleDetection);
+assert.equal(angleQuality.passed, false);
+assert.equal(angleQuality.failReason, 'angle');
+assert.ok(angleQuality.retakeMessage.includes('angle'));
+
+// 4. Cross-Check Tests
+// 4a. Within tolerance (agreement)
+const crossCheckAgree = aiDetector.runCrossCheck({ ppm: 20, dose: 300 }, { ppm: 21, dose: 315 });
+assert.equal(crossCheckAgree.agreed, true);
+assert.equal(crossCheckAgree.disagreed, false);
+
+// 4b. Disagreement beyond tolerance
+const crossCheckDisagree = aiDetector.runCrossCheck({ ppm: 10, dose: 150 }, { ppm: 20, dose: 300 });
+assert.equal(crossCheckDisagree.agreed, false);
+assert.equal(crossCheckDisagree.disagreed, true);
+assert.ok(crossCheckDisagree.flagMessage.includes('Cross-check discrepancy'));
+
+// 5. Fallback path reading calculation
+const fallbackReading = calculateReading([syntheticBadge()], { rois: lowConfDetection.rois });
+assert.equal(fallbackReading.valid, true);
+assert.equal(fallbackReading.ppm, clean.ppm);
+assert.equal(fallbackReading.dose, clean.dose);
+
+// 6. Integration test for analyzeBadge with fallback and record metadata storage
+let savedRecords = [];
+const mockStorage = {
+  getItem: () => JSON.stringify(savedRecords),
+  setItem: (key, val) => { savedRecords = JSON.parse(val); },
+};
+global.localStorage = mockStorage;
+global.document = {
+  createElement: () => ({
+    width: 100,
+    height: 100,
+    getContext: () => ({ drawImage: () => {} }),
+    toDataURL: () => 'data:image/jpeg;base64,mock',
+  }),
+  querySelector: () => ({
+    value: 'WRK-TEST',
+    textContent: '',
+    hidden: false,
+    style: {},
+    className: '',
+    querySelectorAll: () => [],
+    scrollIntoView: () => {},
+  }),
+};
+const testCapture = {
+  frames: [syntheticBadge()],
+  backgroundRGB: [20, 20, 20],
+};
+app.analyzeBadge(testCapture);
+assert.equal(savedRecords.length, 1);
+const savedRec = savedRecords[0];
+assert.ok(savedRec.detectedRois);
+assert.ok(savedRec.detectedRois.strip);
+assert.equal(savedRec.modelVersion, 'h2s-badge-ai-v1.2');
+assert.equal(typeof savedRec.fallbackUsed, 'boolean');
+assert.ok(savedRec.aiQualityScores);
+assert.ok(savedRec.crossCheck);
+
 waitForVideoReady(startingVideo).then((video) => {
   assert.equal(video, startingVideo);
   console.log('verification ok');
