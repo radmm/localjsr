@@ -8,6 +8,15 @@ const {
   ROI_MARGIN,
   ROI_LAYOUT_VERSION,
   ANALYSIS_VERSION,
+  CHART_REFERENCE_TABLE,
+  DEMO_DISTANCE_THRESHOLD,
+  weightedLabDistance,
+  estimateChartDemo,
+  srgbToLinear,
+  linearToSrgb,
+  fitCorrection,
+  calculateFrameChannelRatio,
+  applyCameraLocks,
   estimateBandFromLab,
   computeIncrementalExposure,
   summarizeReading,
@@ -18,6 +27,7 @@ const {
   isVideoReady,
   waitForVideoReady,
   getGuideCrop,
+  distance,
 } = app;
 
 assert.deepEqual(H2S_BANDS, [0, 1, 2, 5, 10, 20, 50, 100]);
@@ -335,6 +345,176 @@ assert.equal(savedRec.modelVersion, 'h2s-badge-ai-v1.2');
 assert.equal(typeof savedRec.fallbackUsed, 'boolean');
 assert.ok(savedRec.aiQualityScores);
 assert.ok(savedRec.crossCheck);
+
+// --- 7. Linear Light & sRGB Conversion Tests ---
+[0, 10, 50, 128, 184, 200, 255].forEach((val) => {
+  const lin = srgbToLinear(val);
+  const roundTrip = linearToSrgb(lin);
+  assert.ok(Math.abs(roundTrip - val) < 0.02, `Round trip for ${val} failed: got ${roundTrip}`);
+});
+
+// --- 8. Chart Demo Mode Tests ---
+assert.equal(CHART_REFERENCE_TABLE.length, 21);
+
+// 8a. Weighted Euclidean Lab distance tests (weights: L 0.5, a 0.5, b 2.0)
+const dLTest = weightedLabDistance([50, 20, 10], [52, 20, 10]);
+assert.ok(Math.abs(dLTest - Math.sqrt(0.5 * 4)) < 1e-6);
+const daTest = weightedLabDistance([50, 20, 10], [50, 22, 10]);
+assert.ok(Math.abs(daTest - Math.sqrt(0.5 * 4)) < 1e-6);
+const dbTest = weightedLabDistance([50, 20, 10], [50, 20, 12]);
+assert.ok(Math.abs(dbTest - Math.sqrt(2.0 * 4)) < 1e-6);
+
+// 8b. Add tests with each chart row as input expecting its own ppm back
+CHART_REFERENCE_TABLE.forEach((row, index) => {
+  const result = estimateChartDemo(row.lab);
+  assert.equal(result.valid, true, `Chart row ${index} (ppm: ${row.ppm}, temp: ${row.tempC}) failed validity`);
+  assert.equal(result.ppm, row.ppm, `Row ${index} expected ppm ${row.ppm}, got ${result.ppm}`);
+  assert.equal(result.nearestCell.ppm, row.ppm);
+  assert.equal(result.nearestCell.tempC, row.tempC);
+  assert.ok(result.distance < 1e-4, `Distance for exact chart row ${index} should be ~0, got ${result.distance}`);
+  assert.equal(result.label, 'Demo estimate, not calibrated');
+  assert.deepEqual(result.measuredLab, row.lab.map((v) => Number(v.toFixed(2))));
+});
+
+// 8c. Test each row with optional user temperature input expecting its own ppm back
+CHART_REFERENCE_TABLE.forEach((row, index) => {
+  const resultWithTemp = estimateChartDemo(row.lab, { userTemperature: row.tempC });
+  assert.equal(resultWithTemp.valid, true);
+  assert.equal(resultWithTemp.ppm, row.ppm);
+  assert.equal(resultWithTemp.temperatureConstraintApplied, true);
+  assert.equal(resultWithTemp.filteredTemp, row.tempC);
+});
+
+// 8d. Optional temperature column filtering across rows
+const testLab25 = [45, 33, -3];
+const demoCol25 = estimateChartDemo(testLab25, { userTemperature: 25 });
+assert.equal(demoCol25.valid, true);
+assert.equal(demoCol25.temperatureConstraintApplied, true);
+assert.equal(demoCol25.filteredTemp, 25);
+assert.ok(demoCol25.ppm >= 10);
+
+// 8e. 3-nearest cells inverse-distance weighting interpolation across rows
+const midLab15 = [
+  (41.63 + 43.86) / 2,
+  (34.68 + 32.46) / 2,
+  (-7.21 + -2.21) / 2,
+];
+const midDemo = estimateChartDemo(midLab15);
+assert.equal(midDemo.valid, true);
+assert.ok(midDemo.ppm >= 10 && midDemo.ppm <= 20, `Interpolated ppm should be between 10 and 20, got ${midDemo.ppm}`);
+assert.equal(midDemo.label, 'Demo estimate, not calibrated');
+
+// 8f. "No match, retake" when distance exceeds threshold
+const unmatchedLab = [10, 0, -80]; // extreme blue color far from badge spectrum
+const noMatchResult = estimateChartDemo(unmatchedLab);
+assert.equal(noMatchResult.valid, false);
+assert.equal(noMatchResult.refusalReason, 'No match, retake');
+assert.equal(noMatchResult.message, 'No match, retake');
+assert.ok(noMatchResult.distance > DEMO_DISTANCE_THRESHOLD);
+assert.equal(noMatchResult.label, 'Demo estimate, not calibrated');
+
+// --- 9. Blue Color Cast Correction & Diagnostics Tests ---
+
+function applySyntheticBlueTint(badgeFrame) {
+  const w = badgeFrame.width;
+  const h = badgeFrame.height;
+  const tinted = {
+    width: w,
+    height: h,
+    pixels: new Uint8ClampedArray(badgeFrame.pixels.length),
+    getContext: () => ({
+      getImageData: (x, y, sw, sh) => {
+        const sample = new Uint8ClampedArray(sw * sh * 4);
+        for (let row = 0; row < sh; row += 1) {
+          const start = ((y + row) * w + x) * 4;
+          sample.set(tinted.pixels.subarray(start, start + sw * 4), row * sw * 4);
+        }
+        return { data: sample, width: sw, height: sh };
+      },
+    }),
+    toDataURL: () => 'data:image/jpeg;base64,tinted',
+  };
+  for (let i = 0; i < badgeFrame.pixels.length; i += 4) {
+    const r = badgeFrame.pixels[i];
+    const g = badgeFrame.pixels[i + 1];
+    const b = badgeFrame.pixels[i + 2];
+    // Strong blue cast: Red suppressed to 65%, Green 90%, Blue boosted without clipping to 255
+    tinted.pixels[i] = Math.max(1, Math.min(250, Math.round(r * 0.65)));
+    tinted.pixels[i + 1] = Math.max(1, Math.min(250, Math.round(g * 0.90)));
+    tinted.pixels[i + 2] = Math.max(1, Math.min(250, Math.round(b * 1.12 + 5)));
+    tinted.pixels[i + 3] = badgeFrame.pixels[i + 3];
+  }
+  return tinted;
+}
+
+// 9a. Channel ratio calculation & extreme cast warning
+const untintedFrame = syntheticBadge();
+const tintedFrame = applySyntheticBlueTint(syntheticBadge());
+const untintedRatio = calculateFrameChannelRatio(untintedFrame);
+const tintedRatio = calculateFrameChannelRatio(tintedFrame);
+
+assert.ok(untintedRatio.bOverR < 1.3, `Untinted B/R should be balanced, got ${untintedRatio.bOverR}`);
+assert.equal(untintedRatio.isExtreme, false);
+assert.equal(untintedRatio.warning, null);
+
+assert.ok(tintedRatio.bOverR > 1.6, `Tinted B/R should exceed 1.6, got ${tintedRatio.bOverR}`);
+assert.equal(tintedRatio.isExtreme, true);
+assert.equal(tintedRatio.warning, 'Strong color cast, retake');
+
+// 9b. Synthetic blue tint correction test: corrected result lands within tolerance of untinted one
+const cleanResult = calculateReading([untintedFrame], { backgroundRGB: [20, 20, 20] });
+const tintedResult = calculateReading([tintedFrame], { backgroundRGB: [20, 20, 20] });
+
+assert.equal(cleanResult.valid, true, cleanResult.refusalReason);
+assert.equal(tintedResult.valid, true, tintedResult.refusalReason);
+
+// Confirm strip Lab lands within tolerance
+const stripDeltaE = distance(cleanResult.stripLab, tintedResult.stripLab);
+assert.ok(stripDeltaE < 5.0, `Corrected Lab DeltaE (${stripDeltaE.toFixed(2)}) should be within 5.0 tolerance`);
+
+// Confirm ppm and dose estimates match untinted image
+assert.equal(tintedResult.ppm, cleanResult.ppm);
+assert.equal(tintedResult.dose, cleanResult.dose);
+
+// Confirm corrected RGB (not raw RGB) is output and used for rgbToLab
+assert.ok(tintedResult.stripRGB);
+assert.notDeepEqual(tintedResult.stripRGB, tintedResult.roiMedians.strip);
+
+// Confirm white balance pre-step scaled channels appropriately (red boosted, blue suppressed)
+assert.ok(tintedResult.wbScales[0] > 1.0, `Red channel WB scale should be > 1.0, got ${tintedResult.wbScales[0]}`);
+assert.ok(tintedResult.wbScales[2] < 1.0, `Blue channel WB scale should be < 1.0, got ${tintedResult.wbScales[2]}`);
+
+// 9c. MediaStreamTrack manual camera lock tests
+const mockTrackLockable = {
+  getCapabilities: () => ({
+    exposureMode: ['manual', 'continuous'],
+    whiteBalanceMode: ['manual', 'continuous'],
+  }),
+  applyConstraints: async () => {},
+  getSettings: () => ({
+    exposureMode: 'manual',
+    whiteBalanceMode: 'manual',
+  }),
+};
+const mockTrackAutoOnly = {
+  getCapabilities: () => ({
+    exposureMode: ['continuous'],
+    whiteBalanceMode: ['continuous'],
+  }),
+};
+
+applyCameraLocks(mockTrackLockable).then((lockResult) => {
+  assert.equal(lockResult.supported, true);
+  assert.equal(lockResult.exposureLocked, true);
+  assert.equal(lockResult.whiteBalanceLocked, true);
+  assert.equal(lockResult.description, 'AE & AWB Locked');
+});
+
+applyCameraLocks(mockTrackAutoOnly).then((lockResult) => {
+  assert.equal(lockResult.supported, false);
+  assert.equal(lockResult.exposureLocked, false);
+  assert.equal(lockResult.whiteBalanceLocked, false);
+});
 
 waitForVideoReady(startingVideo).then((video) => {
   assert.equal(video, startingVideo);

@@ -201,8 +201,188 @@ function computeIncrementalExposure(recordPairs) {
 }
 
 function srgbToLinear(channel) {
-  const normalized = channel / 255;
+  const normalized = clamp(channel / 255, 0, 1);
   return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+}
+
+function linearToSrgb(linear) {
+  const clamped = clamp(linear, 0, 1);
+  const norm = clamped <= 0.0031308
+    ? 12.92 * clamped
+    : 1.055 * (clamped ** (1 / 2.4)) - 0.055;
+  return clamp(norm * 255, 0, 255);
+}
+
+const CHART_REFERENCE_TABLE = [
+  { ppm: 0, tempC: 15, lab: [45.77, 34.05, -19.46] },
+  { ppm: 10, tempC: 5, lab: [39.43, 33.72, -9.73] },
+  { ppm: 10, tempC: 10, lab: [45.62, 34.82, -9.83] },
+  { ppm: 10, tempC: 15, lab: [41.63, 34.68, -7.21] },
+  { ppm: 10, tempC: 20, lab: [45.41, 35.39, -6.28] },
+  { ppm: 10, tempC: 25, lab: [45.57, 30.22, -3.75] },
+  { ppm: 20, tempC: 5, lab: [40.97, 35.07, -7.39] },
+  { ppm: 20, tempC: 10, lab: [45.16, 33.53, -7.08] },
+  { ppm: 20, tempC: 15, lab: [43.86, 32.46, -2.21] },
+  { ppm: 20, tempC: 20, lab: [41.46, 33.59, -2.12] },
+  { ppm: 20, tempC: 25, lab: [43.93, 35.10, -0.87] },
+  { ppm: 40, tempC: 5, lab: [39.98, 34.34, 1.43] },
+  { ppm: 40, tempC: 10, lab: [39.54, 33.19, 2.49] },
+  { ppm: 40, tempC: 15, lab: [46.18, 34.44, 4.93] },
+  { ppm: 40, tempC: 20, lab: [45.95, 34.55, 9.31] },
+  { ppm: 40, tempC: 25, lab: [50.79, 33.50, 10.43] },
+  { ppm: 50, tempC: 5, lab: [52.12, 34.16, 4.29] },
+  { ppm: 50, tempC: 10, lab: [47.10, 38.09, 4.91] },
+  { ppm: 50, tempC: 15, lab: [46.79, 33.24, 10.70] },
+  { ppm: 50, tempC: 20, lab: [50.64, 32.35, 10.12] },
+  { ppm: 50, tempC: 25, lab: [51.63, 31.86, 12.39] },
+];
+
+const DEMO_DISTANCE_THRESHOLD = 25.0;
+
+function weightedLabDistance(lab1, lab2) {
+  const dL = lab1[0] - lab2[0];
+  const da = lab1[1] - lab2[1];
+  const db = lab1[2] - lab2[2];
+  return Math.sqrt(0.5 * dL * dL + 0.5 * da * da + 2.0 * db * db);
+}
+
+function estimateChartDemo(measuredLab, { userTemperature = null, threshold = DEMO_DISTANCE_THRESHOLD } = {}) {
+  let candidates = CHART_REFERENCE_TABLE;
+  let temperatureConstraintApplied = false;
+  let filteredTemp = null;
+
+  if (userTemperature !== null && userTemperature !== undefined && userTemperature !== '' && !isNaN(Number(userTemperature))) {
+    const targetTemp = Number(userTemperature);
+    const columns = [5, 10, 15, 20, 25];
+    filteredTemp = columns.reduce((prev, curr) => Math.abs(curr - targetTemp) < Math.abs(prev - targetTemp) ? curr : prev, columns[0]);
+    candidates = CHART_REFERENCE_TABLE.filter((cell) => cell.ppm === 0 || cell.tempC === filteredTemp);
+    temperatureConstraintApplied = true;
+  }
+
+  const scored = candidates.map((cell) => ({
+    ...cell,
+    distance: weightedLabDistance(measuredLab, cell.lab),
+  })).sort((a, b) => a.distance - b.distance);
+
+  const nearestCell = scored[0];
+  const nearestDistance = nearestCell.distance;
+
+  if (nearestDistance > threshold) {
+    return {
+      valid: false,
+      label: 'Demo estimate, not calibrated',
+      refusalReason: 'No match, retake',
+      message: 'No match, retake',
+      nearestCell: {
+        ppm: nearestCell.ppm,
+        tempC: nearestCell.tempC,
+        lab: nearestCell.lab,
+        distance: Number(nearestDistance.toFixed(2)),
+      },
+      measuredLab: measuredLab.map((v) => Number(v.toFixed(2))),
+      distance: Number(nearestDistance.toFixed(2)),
+      matchFound: false,
+      temperatureConstraintApplied,
+      filteredTemp,
+    };
+  }
+
+  if (nearestDistance < 1e-6) {
+    return {
+      valid: true,
+      label: 'Demo estimate, not calibrated',
+      ppm: nearestCell.ppm,
+      interpolatedPpm: nearestCell.ppm,
+      temperatureC: nearestCell.tempC,
+      interpolatedTemp: nearestCell.tempC,
+      nearestCell: {
+        ppm: nearestCell.ppm,
+        tempC: nearestCell.tempC,
+        lab: nearestCell.lab,
+        distance: 0,
+      },
+      measuredLab: measuredLab.map((v) => Number(v.toFixed(2))),
+      distance: 0,
+      matchFound: true,
+      temperatureConstraintApplied,
+      filteredTemp,
+    };
+  }
+
+  const k = Math.min(3, scored.length);
+  const topK = scored.slice(0, k);
+
+  let totalWeight = 0;
+  let weightedPpmSum = 0;
+  let weightedTempSum = 0;
+
+  for (const cell of topK) {
+    const weight = 1 / Math.max(cell.distance, 1e-6);
+    totalWeight += weight;
+    weightedPpmSum += cell.ppm * weight;
+    weightedTempSum += (temperatureConstraintApplied && filteredTemp !== null ? filteredTemp : cell.tempC) * weight;
+  }
+
+  const interpolatedPpm = totalWeight > 0 ? weightedPpmSum / totalWeight : nearestCell.ppm;
+  const interpolatedTemp = totalWeight > 0 ? weightedTempSum / totalWeight : nearestCell.tempC;
+
+  return {
+    valid: true,
+    label: 'Demo estimate, not calibrated',
+    ppm: Number(interpolatedPpm.toFixed(1)),
+    interpolatedPpm: Number(interpolatedPpm.toFixed(1)),
+    temperatureC: Number(interpolatedTemp.toFixed(1)),
+    interpolatedTemp: Number(interpolatedTemp.toFixed(1)),
+    nearestCell: {
+      ppm: nearestCell.ppm,
+      tempC: nearestCell.tempC,
+      lab: nearestCell.lab,
+      distance: Number(nearestDistance.toFixed(2)),
+    },
+    measuredLab: measuredLab.map((v) => Number(v.toFixed(2))),
+    distance: Number(nearestDistance.toFixed(2)),
+    matchFound: true,
+    topCells: topK.map((c) => ({ ppm: c.ppm, tempC: c.tempC, distance: Number(c.distance.toFixed(2)) })),
+    temperatureConstraintApplied,
+    filteredTemp,
+  };
+}
+
+function calculateFrameChannelRatio(frame) {
+  if (!frame || !frame.width || !frame.height) {
+    return { bOverR: 1.0, rAvg: 128, gAvg: 128, bAvg: 128, isExtreme: false, warning: null };
+  }
+  const context = frame.getContext('2d');
+  const width = frame.width;
+  const height = frame.height;
+  const step = Math.max(1, Math.floor(Math.sqrt((width * height) / 2500)));
+  const imgData = context.getImageData(0, 0, width, height).data;
+  let rSum = 0;
+  let gSum = 0;
+  let bSum = 0;
+  let count = 0;
+  for (let y = 0; y < height; y += step) {
+    for (let x = 0; x < width; x += step) {
+      const idx = (y * width + x) * 4;
+      rSum += imgData[idx];
+      gSum += imgData[idx + 1];
+      bSum += imgData[idx + 2];
+      count += 1;
+    }
+  }
+  const rAvg = count ? rSum / count : 128;
+  const gAvg = count ? gSum / count : 128;
+  const bAvg = count ? bSum / count : 128;
+  const bOverR = rAvg > 0 ? bAvg / rAvg : 1.0;
+  const isExtreme = bOverR > 1.6 || bOverR < 0.45;
+  return {
+    bOverR: Number(bOverR.toFixed(2)),
+    rAvg: Number(rAvg.toFixed(1)),
+    gAvg: Number(gAvg.toFixed(1)),
+    bAvg: Number(bAvg.toFixed(1)),
+    isExtreme,
+    warning: isExtreme ? 'Strong color cast, retake' : null,
+  };
 }
 
 function rgbToLab(rgb) {
@@ -268,10 +448,40 @@ function solveLinearSystem(matrix, vector) {
   return augmented.map((row) => row[size]);
 }
 
-function fitCorrection(observed) {
-  const design = observed.map((reading) => [1, reading[0], reading[1], reading[2]]);
+function fitCorrection(observed, swatches = REFERENCE_SWATCHES) {
+  const activeSwatches = swatches || REFERENCE_SWATCHES;
+
+  // 1. White balance pre-step:
+  // Identify the neutral gray/white swatch (refSwatch6: [184, 184, 181])
+  let neutralIndex = activeSwatches.findIndex((s) => s.key === 'refSwatch6');
+  if (neutralIndex === -1 || !observed[neutralIndex]) {
+    neutralIndex = activeSwatches.length > 5 ? 5 : 0;
+  }
+
+  const targetNeutralSrgb = activeSwatches[neutralIndex].color;
+  const targetNeutralLin = targetNeutralSrgb.map(srgbToLinear);
+  const targetLuma = (targetNeutralLin[0] + targetNeutralLin[1] + targetNeutralLin[2]) / 3;
+
+  const obsNeutralSrgb = observed[neutralIndex] || targetNeutralSrgb;
+  const obsNeutralLin = obsNeutralSrgb.map(srgbToLinear);
+
+  // Scale channels so the gray or white swatch becomes neutral (R = G = B = targetLuma)
+  const wbScales = [
+    obsNeutralLin[0] > 1e-5 ? targetLuma / obsNeutralLin[0] : 1,
+    obsNeutralLin[1] > 1e-5 ? targetLuma / obsNeutralLin[1] : 1,
+    obsNeutralLin[2] > 1e-5 ? targetLuma / obsNeutralLin[2] : 1,
+  ];
+
+  // 2. Convert all observed swatches to linear and apply white balance scaling
+  const design = observed.map((reading) => {
+    const lin = reading.map(srgbToLinear);
+    const wbLin = [lin[0] * wbScales[0], lin[1] * wbScales[1], lin[2] * wbScales[2]];
+    return [1, wbLin[0], wbLin[1], wbLin[2]];
+  });
+
+  // 3. Fit 3x3 matrix plus offset against target swatches in linear space
   const coefficients = Array.from({ length: 3 }, (_, channel) => {
-    const targets = REFERENCE_SWATCHES.map((swatch) => swatch.color[channel]);
+    const targets = activeSwatches.map((swatch) => srgbToLinear(swatch.color[channel]));
     const xtx = Array.from({ length: 4 }, () => Array(4).fill(0));
     const xty = Array(4).fill(0);
 
@@ -284,16 +494,30 @@ function fitCorrection(observed) {
       }
     }
 
+    // Small Tikhonov regularization on diagonal for numerical stability
+    for (let i = 0; i < 4; i += 1) {
+      xtx[i][i] += 1e-7;
+    }
+
     return solveLinearSystem(xtx, xty);
   });
 
-  return (reading) => {
-    const [red, green, blue] = reading;
-    return coefficients.map((coefficientsForChannel) => coefficientsForChannel[0]
-      + coefficientsForChannel[1] * red
-      + coefficientsForChannel[2] * green
-      + coefficientsForChannel[3] * blue);
+  // 4. Correction function: sRGB -> linear -> WB scale -> 3x3 matrix + offset -> linearToSrgb
+  const correct = (reading) => {
+    const lin = reading.map(srgbToLinear);
+    const wbLin = [lin[0] * wbScales[0], lin[1] * wbScales[1], lin[2] * wbScales[2]];
+    const outLin = coefficients.map((coeffs) => coeffs[0]
+      + coeffs[1] * wbLin[0]
+      + coeffs[2] * wbLin[1]
+      + coeffs[3] * wbLin[2]);
+    return outLin.map(linearToSrgb);
   };
+
+  correct.wbScales = wbScales;
+  correct.coefficients = coefficients;
+  correct.neutralIndex = neutralIndex;
+
+  return correct;
 }
 
 function calculateBlurVariance(canvas) {
@@ -381,10 +605,11 @@ function calculateReading(frames, { backgroundRGB = null, rois = null } = {}) {
     return refuseReading('Badge not aligned; strip matches background', 0, diagnostics);
   }
 
+  const frameRatio = calculateFrameChannelRatio(frames[0]);
   const referenceReadings = activeSwatches.map((swatch) => roiMedians[swatch.key]);
-  const correct = fitCorrection(referenceReadings);
+  const correct = fitCorrection(referenceReadings, activeSwatches);
   const residual = Math.sqrt(referenceReadings.reduce((total, reading, index) => total + distance(correct(reading), activeSwatches[index].color) ** 2, 0) / referenceReadings.length);
-  if (residual > REFERENCE_ERROR_THRESHOLD) return refuseReading(`Reference correction failed (${residual.toFixed(1)} RGB RMS)`, residual, diagnostics);
+  if (residual > REFERENCE_ERROR_THRESHOLD) return refuseReading(`Reference correction failed (${residual.toFixed(1)} RGB RMS)`, residual, { ...diagnostics, frameRatio });
 
   const stripRGB = correct(roiMedians.strip);
   const sealedReferenceRGB = correct(roiMedians.sealedReference);
@@ -392,12 +617,37 @@ function calculateReading(frames, { backgroundRGB = null, rois = null } = {}) {
   const sealedReferenceLab = rgbToLab(sealedReferenceRGB);
   const compensationFactor = computeCompensationFactor(sealedReferenceLab);
   const durationMinutes = Number((typeof document !== 'undefined' ? document.querySelector('#exposureMinutes')?.value : '15') || 15);
+
+  const swatchesDiagnostics = activeSwatches.map((swatch) => {
+    const rawRgb = roiMedians[swatch.key] || swatch.color;
+    const correctedRgb = correct(rawRgb);
+    return {
+      key: swatch.key,
+      name: swatch.key.replace('refSwatch', 'Swatch '),
+      rawRgb: rawRgb.map((v) => Math.round(v)),
+      correctedRgb: correctedRgb.map((v) => Math.round(v)),
+      targetRgb: swatch.color,
+    };
+  });
+  const stripDiagnostic = {
+    key: 'strip',
+    name: 'Strip ROI',
+    rawRgb: (roiMedians.strip || [184, 184, 181]).map((v) => Math.round(v)),
+    correctedRgb: stripRGB.map((v) => Math.round(v)),
+    targetRgb: null,
+  };
+
   return {
     ...summarizeReading({ stripLab, sealedReferenceLab, durationMinutes, compensationFactor }),
     valid: true,
     quality: residual,
+    stripRGB,
     stripLab,
+    sealedReferenceRGB,
     sealedReferenceLab,
+    frameRatio,
+    swatchesDiagnostics: [...swatchesDiagnostics, stripDiagnostic],
+    wbScales: correct.wbScales,
     ...diagnostics,
   };
 }
@@ -544,7 +794,9 @@ function cropFrame(source, crop) {
   const cropped = document.createElement('canvas');
   cropped.width = crop.width;
   cropped.height = crop.height;
-  cropped.getContext('2d').drawImage(source, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
+  const ctx = cropped.getContext('2d');
+  ctx.filter = 'none';
+  ctx.drawImage(source, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
   return cropped;
 }
 
@@ -900,9 +1152,211 @@ function analyzeBadge(capture, { forceEstimate = false } = {}) {
 
   const debugToggle = document.querySelector('#debugToggle');
   if (debugToggle?.checked) showDebugCapture(capture.frames[0], reading.roiMedians, aiDetection);
+  
+  lastSuccessfulReading = reading;
+  const frameRatio = reading.frameRatio || calculateFrameChannelRatio(capture.frames[0]);
+  updateColorCastDebugPanel(reading, frameRatio);
+  updateChartDemoCard(reading);
+
   renderRecords();
   const resultPanel = document.querySelector('#resultPanel');
   if (resultPanel) resultPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+let lastSuccessfulReading = null;
+
+async function applyCameraLocks(track) {
+  if (!track || !track.getCapabilities) {
+    return {
+      supported: false,
+      exposureLocked: false,
+      whiteBalanceLocked: false,
+      description: 'Auto (Manual lock unsupported)',
+    };
+  }
+  try {
+    const capabilities = track.getCapabilities() || {};
+    const advanced = {};
+    let requested = false;
+
+    if (capabilities.whiteBalanceMode && capabilities.whiteBalanceMode.includes('manual')) {
+      advanced.whiteBalanceMode = 'manual';
+      requested = true;
+    }
+    if (capabilities.exposureMode && capabilities.exposureMode.includes('manual')) {
+      advanced.exposureMode = 'manual';
+      requested = true;
+    }
+
+    if (requested) {
+      await track.applyConstraints({ advanced: [advanced] });
+      const settings = track.getSettings?.() || {};
+      const wbLocked = settings.whiteBalanceMode === 'manual' || Boolean(advanced.whiteBalanceMode);
+      const expLocked = settings.exposureMode === 'manual' || Boolean(advanced.exposureMode);
+      let desc = 'AE & AWB Locked';
+      if (wbLocked && expLocked) desc = 'AE & AWB Locked';
+      else if (wbLocked) desc = 'AWB Locked';
+      else if (expLocked) desc = 'AE Locked';
+
+      return {
+        supported: true,
+        exposureLocked: expLocked,
+        whiteBalanceLocked: wbLocked,
+        description: desc,
+      };
+    }
+    return {
+      supported: false,
+      exposureLocked: false,
+      whiteBalanceLocked: false,
+      description: 'Auto (Manual lock unsupported by device)',
+    };
+  } catch (e) {
+    console.warn('applyCameraLocks failed:', e);
+    return {
+      supported: false,
+      exposureLocked: false,
+      whiteBalanceLocked: false,
+      description: 'Auto (Lock request failed)',
+    };
+  }
+}
+
+function updateColorCastDebugPanel(reading, frameRatio) {
+  if (typeof document === 'undefined') return;
+  const panel = document.querySelector('#colorCastDebugPanel');
+  const ratioBadge = document.querySelector('#frameRatioBadge');
+  const warningEl = document.querySelector('#colorCastWarning');
+  const tbody = document.querySelector('#debugSwatchesBody');
+
+  if (ratioBadge) {
+    ratioBadge.textContent = `B/R: ${frameRatio.bOverR} ${frameRatio.isExtreme ? '(Cast Alert)' : '(Balanced)'}`;
+    if (frameRatio.isExtreme) {
+      ratioBadge.className = 'pill';
+      ratioBadge.style.background = 'var(--status-red-bg)';
+      ratioBadge.style.color = 'var(--status-red-text)';
+      ratioBadge.style.borderColor = 'var(--status-red-border)';
+    } else {
+      ratioBadge.className = 'pill subtle';
+      ratioBadge.style.background = '';
+      ratioBadge.style.color = '';
+      ratioBadge.style.borderColor = '';
+    }
+  }
+
+  if (warningEl) {
+    if (frameRatio.isExtreme) {
+      warningEl.textContent = `⚠ Strong color cast, retake (Frame B/R ratio: ${frameRatio.bOverR})`;
+      warningEl.style.display = 'block';
+    } else {
+      warningEl.style.display = 'none';
+    }
+  }
+
+  if (tbody && reading.swatchesDiagnostics) {
+    tbody.innerHTML = reading.swatchesDiagnostics.map((item) => {
+      const rawColor = `rgb(${item.rawRgb.join(',')})`;
+      const corrColor = `rgb(${item.correctedRgb.join(',')})`;
+      const targetColor = item.targetRgb ? `rgb(${item.targetRgb.join(',')})` : '--';
+      return `<tr style="border-bottom: 1px solid var(--border-subtle);">
+        <td style="padding: 4px 6px; font-weight: 600;">${item.name}</td>
+        <td style="padding: 4px 6px;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${rawColor};vertical-align:middle;margin-right:4px;border:1px solid rgba(0,0,0,0.15);"></span>
+          <code>${item.rawRgb.join(', ')}</code>
+        </td>
+        <td style="padding: 4px 6px;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${corrColor};vertical-align:middle;margin-right:4px;border:1px solid rgba(0,0,0,0.15);"></span>
+          <code>${item.correctedRgb.join(', ')}</code>
+        </td>
+        <td style="padding: 4px 6px;">
+          ${item.targetRgb ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${targetColor};vertical-align:middle;margin-right:4px;border:1px solid rgba(0,0,0,0.15);"></span><code>${item.targetRgb.join(', ')}</code>` : '<span style="color:var(--text-muted);">-</span>'}
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  const debugToggle = document.querySelector('#debugToggle');
+  if (panel) {
+    panel.style.display = (debugToggle?.checked || frameRatio.isExtreme) ? 'block' : 'none';
+  }
+}
+
+function updateChartDemoCard(reading = lastSuccessfulReading) {
+  if (typeof document === 'undefined') return;
+  const toggle = document.querySelector('#chartDemoToggle');
+  const card = document.querySelector('#chartDemoCard');
+  if (!card) return;
+
+  if (!toggle?.checked || !reading?.stripLab) {
+    card.style.display = 'none';
+    return;
+  }
+
+  const tempInput = document.querySelector('#demoTempInput');
+  const userTemperature = tempInput?.value ? Number(tempInput.value) : null;
+  const demo = estimateChartDemo(reading.stripLab, { userTemperature });
+
+  const ppmVal = document.querySelector('#demoPpmValue');
+  const tempVal = document.querySelector('#demoTempValue');
+  const matchBadge = document.querySelector('#demoMatchBadge');
+  const nearestCell = document.querySelector('#demoNearestCell');
+  const measuredLab = document.querySelector('#demoMeasuredLab');
+  const distanceEl = document.querySelector('#demoDistance');
+
+  card.style.display = 'flex';
+
+  if (!demo.valid || !demo.matchFound) {
+    if (ppmVal) {
+      ppmVal.textContent = 'No match, retake';
+      ppmVal.style.color = 'var(--status-red-text)';
+    }
+    if (tempVal) tempVal.textContent = '';
+    if (matchBadge) {
+      matchBadge.textContent = 'Distance Out of Bounds';
+      matchBadge.className = 'pill';
+      matchBadge.style.background = 'var(--status-red-bg)';
+      matchBadge.style.color = 'var(--status-red-text)';
+      matchBadge.style.borderColor = 'var(--status-red-border)';
+    }
+    if (nearestCell && demo.nearestCell) {
+      nearestCell.textContent = `${demo.nearestCell.ppm} ppm @ ${demo.nearestCell.tempC}°C`;
+    }
+    if (measuredLab) {
+      measuredLab.textContent = `[${demo.measuredLab.join(', ')}]`;
+    }
+    if (distanceEl) {
+      distanceEl.textContent = `${demo.distance} (limit: ${DEMO_DISTANCE_THRESHOLD})`;
+      distanceEl.style.color = 'var(--status-red-text)';
+    }
+    return;
+  }
+
+  if (ppmVal) {
+    ppmVal.textContent = `${demo.ppm} ppm`;
+    ppmVal.style.color = 'var(--text-primary)';
+  }
+  if (tempVal) {
+    tempVal.textContent = `@ ${demo.temperatureC} °C`;
+  }
+  if (matchBadge) {
+    matchBadge.textContent = demo.temperatureConstraintApplied
+      ? `${demo.filteredTemp}°C column interpolation`
+      : '3-Cell IDW Interpolation';
+    matchBadge.className = 'pill subtle';
+    matchBadge.style.background = '';
+    matchBadge.style.color = '';
+    matchBadge.style.borderColor = '';
+  }
+  if (nearestCell && demo.nearestCell) {
+    nearestCell.textContent = `${demo.nearestCell.ppm} ppm @ ${demo.nearestCell.tempC}°C (L* ${demo.nearestCell.lab[0]}, a* ${demo.nearestCell.lab[1]}, b* ${demo.nearestCell.lab[2]})`;
+  }
+  if (measuredLab) {
+    measuredLab.textContent = `[${demo.measuredLab.join(', ')}]`;
+  }
+  if (distanceEl) {
+    distanceEl.textContent = `${demo.distance}`;
+    distanceEl.style.color = 'var(--text-primary)';
+  }
 }
 
 function initBrowser() {
@@ -961,16 +1415,21 @@ function initBrowser() {
       }
       cameraStream = stream;
       const track = cameraStream.getVideoTracks()[0];
-      let lockable = false;
-      if (track?.getCapabilities) {
-        try {
-          const capabilities = track.getCapabilities() || {};
-          lockable = Boolean(capabilities.exposureMode?.includes('manual') && capabilities.whiteBalanceMode?.includes('manual'));
-          if (lockable) {
-            await track.applyConstraints({ advanced: [{ exposureMode: 'manual', whiteBalanceMode: 'manual' }] });
-          }
-        } catch (e) {
-          // ignore manual lock constraint failure
+      const lockStatus = await applyCameraLocks(track);
+      const lockBadge = document.querySelector('#cameraLockBadge');
+      if (lockBadge) {
+        lockBadge.textContent = lockStatus.exposureLocked || lockStatus.whiteBalanceLocked
+          ? `AE/AWB: Locked`
+          : 'AE/AWB: Auto';
+        lockBadge.title = lockStatus.description;
+        if (lockStatus.exposureLocked || lockStatus.whiteBalanceLocked) {
+          lockBadge.style.color = 'var(--status-green-text)';
+          lockBadge.style.borderColor = 'var(--status-green-border)';
+          lockBadge.style.background = 'var(--status-green-bg)';
+        } else {
+          lockBadge.style.color = '';
+          lockBadge.style.borderColor = '';
+          lockBadge.style.background = '';
         }
       }
       const cameraFeed = document.querySelector('#cameraFeed');
@@ -985,7 +1444,11 @@ function initBrowser() {
         await waitForVideoReady(cameraFeed);
       }
       if (cameraPlaceholder) cameraPlaceholder.style.display = 'none';
-      if (cameraState) cameraState.textContent = lockable ? 'LIVE / AE AWB LOCKED' : 'LIVE PREVIEW';
+      if (cameraState) {
+        cameraState.textContent = (lockStatus.exposureLocked || lockStatus.whiteBalanceLocked)
+          ? `LIVE / ${lockStatus.description.toUpperCase()}`
+          : 'LIVE PREVIEW';
+      }
     } catch (error) {
       const cameraState = document.querySelector('#cameraState');
       if (cameraState) cameraState.textContent = 'CAMERA UNAVAILABLE (USE UPLOAD)';
@@ -1003,7 +1466,9 @@ function initBrowser() {
         const source = document.createElement('canvas');
         source.width = video.videoWidth;
         source.height = video.videoHeight;
-        source.getContext('2d').drawImage(video, 0, 0, source.width, source.height);
+        const ctx = source.getContext('2d');
+        ctx.filter = 'none';
+        ctx.drawImage(video, 0, 0, source.width, source.height);
         sourceFrames.push(source);
         if (sourceFrames.length < 3) {
           requestAnimationFrame(capture);
@@ -1125,7 +1590,9 @@ function initBrowser() {
         showRefusal('Image dimensions could not be read.');
         return;
       }
-      source.getContext('2d').drawImage(pendingUploadImage, 0, 0);
+      const ctx = source.getContext('2d');
+      ctx.filter = 'none';
+      ctx.drawImage(pendingUploadImage, 0, 0);
       const crop = {
         x: Math.round(uploadCrop.x * source.width),
         y: Math.round(uploadCrop.y * source.height),
@@ -1214,11 +1681,32 @@ function initBrowser() {
   });
 
   window.addEventListener('resize', updateCropSelection);
-  document.querySelector('#debugToggle').addEventListener('change', (event) => {
+
+  const chartDemoToggle = document.querySelector('#chartDemoToggle');
+  const demoTempWrapper = document.querySelector('#demoTempWrapper');
+  const demoTempInput = document.querySelector('#demoTempInput');
+
+  chartDemoToggle?.addEventListener('change', (e) => {
+    if (demoTempWrapper) demoTempWrapper.style.display = e.target.checked ? 'inline-flex' : 'none';
+    updateChartDemoCard();
+  });
+
+  demoTempInput?.addEventListener('input', () => {
+    updateChartDemoCard();
+  });
+
+  document.querySelector('#debugToggle')?.addEventListener('change', (event) => {
     const overlay = document.querySelector('#roiDebugOverlay');
-    overlay.hidden = !event.target.checked || !lastDebugCapture;
-    if (event.target.checked && lastDebugCapture) {
-      drawDebugOverlay(lastDebugCapture.frame, lastDebugCapture.roiMedians, lastDebugCapture.aiDetection);
+    const colorCastPanel = document.querySelector('#colorCastDebugPanel');
+    if (overlay) {
+      overlay.hidden = !event.target.checked || !lastDebugCapture;
+      if (event.target.checked && lastDebugCapture) {
+        drawDebugOverlay(lastDebugCapture.frame, lastDebugCapture.roiMedians, lastDebugCapture.aiDetection);
+      }
+    }
+    if (colorCastPanel) {
+      const isExtreme = lastSuccessfulReading?.frameRatio?.isExtreme;
+      colorCastPanel.style.display = (event.target.checked || isExtreme) ? 'block' : 'none';
     }
   });
 
@@ -1250,6 +1738,17 @@ if (typeof module !== 'undefined') {
     BLUR_VARIANCE_THRESHOLD,
     BACKGROUND_SIMILARITY_THRESHOLD,
     CALIBRATION_DATASET,
+    CHART_REFERENCE_TABLE,
+    DEMO_DISTANCE_THRESHOLD,
+    weightedLabDistance,
+    estimateChartDemo,
+    srgbToLinear,
+    linearToSrgb,
+    fitCorrection,
+    calculateFrameChannelRatio,
+    applyCameraLocks,
+    updateChartDemoCard,
+    updateColorCastDebugPanel,
     estimateBandFromLab,
     summarizeReading,
     shrinkRoi,

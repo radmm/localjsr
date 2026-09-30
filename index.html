@@ -74,9 +74,37 @@
             </select>
             <button class="secondary-button" id="sampleBadgeButton" type="button" title="Test with calibrated H2S badge">Test badge</button>
           </div>
-          <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:4px;">
             <label class="debug-toggle"><input id="debugToggle" type="checkbox"> Show ROI debug</label>
+            <label class="debug-toggle"><input id="chartDemoToggle" type="checkbox"> Chart demo mode</label>
+            <label id="demoTempWrapper" class="debug-toggle" style="display:none;align-items:center;gap:6px;">Temp (°C): <input id="demoTempInput" type="number" min="0" max="50" step="1" placeholder="Auto" style="width:62px;height:26px;padding:2px 6px;border-radius:6px;border:1px solid var(--border-subtle);background:var(--bg-surface);font-size:12px;" title="Optional chart temperature column (5, 10, 15, 20, 25 °C)"></label>
             <label class="debug-toggle"><input id="permissiveToggle" type="checkbox" checked> Field mode (always estimate)</label>
+            <span id="cameraLockBadge" class="pill subtle" style="font-size:11px;" title="Camera hardware exposure and white balance lock status">AE/AWB: Checking...</span>
+          </div>
+
+          <div id="colorCastDebugPanel" class="color-cast-panel" style="display:none;margin-top:14px;padding:12px 14px;border-radius:10px;background:var(--bg-surface);border:1px solid var(--border-subtle);font-size:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+              <strong style="font-size:12px;display:flex;align-items:center;gap:6px;">
+                <span>🎨</span> Color Correction & Diagnostics
+              </strong>
+              <span id="frameRatioBadge" class="pill subtle" style="font-size:11px;">B/R: --</span>
+            </div>
+            <div id="colorCastWarning" style="display:none;padding:8px 12px;border-radius:6px;background:var(--status-red-bg);color:var(--status-red-text);border:1px solid var(--status-red-border);font-weight:600;margin-bottom:10px;font-size:12px;">
+              ⚠ Strong color cast, retake
+            </div>
+            <div style="overflow-x:auto;">
+              <table style="width:100%;font-size:11px;border-collapse:collapse;" id="debugSwatchesTable">
+                <thead>
+                  <tr style="text-align:left;border-bottom:1px solid var(--border-subtle);color:var(--text-muted);">
+                    <th style="padding:4px 6px;">ROI / Swatch</th>
+                    <th style="padding:4px 6px;">Raw RGB</th>
+                    <th style="padding:4px 6px;">Corrected RGB</th>
+                    <th style="padding:4px 6px;">Target RGB</th>
+                  </tr>
+                </thead>
+                <tbody id="debugSwatchesBody"></tbody>
+              </table>
+            </div>
           </div>
           <p class="camera-note">8 fixed H₂S bands / sealed reference drift compensation / on-device correction. Photos stay local.</p>
         </div>
@@ -112,6 +140,23 @@
           <div class="result-statuses">
             <div class="status-card" id="validityCard"><span class="status-icon">✓</span><div><small>Badge validity</small><strong id="validityValue">Valid</strong><p id="validityDetail">Band fit within calibration</p></div></div>
             <div class="status-card" id="thresholdCard"><span class="status-icon">↓</span><div><small>Exposure threshold</small><strong id="thresholdResult">Within limit</strong><p>Configured limit: 10 ppm·min</p></div></div>
+            <div class="status-card" id="chartDemoCard" style="display:none;grid-column:1 / -1;border-color:rgba(14,165,233,0.35);background:var(--status-blue-bg);">
+              <span class="status-icon" style="color:var(--status-blue-text);border-color:var(--status-blue-border);font-weight:800;font-size:11px;">DEMO</span>
+              <div style="width:100%;">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+                  <small style="color:var(--status-blue-text);font-weight:700;">Demo estimate, not calibrated</small>
+                  <span id="demoMatchBadge" class="pill subtle" style="font-size:10px;">Chart Interpolation</span>
+                </div>
+                <div style="margin-top:4px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">
+                  <strong id="demoPpmValue" style="font-size:20px;color:var(--text-primary);">-- ppm</strong>
+                  <span id="demoTempValue" style="font-size:13px;color:var(--text-secondary);">@ -- °C</span>
+                </div>
+                <div id="demoDetails" style="margin-top:4px;font-size:11px;color:var(--text-secondary);line-height:1.4;">
+                  <div>Nearest chart cell: <strong id="demoNearestCell">--</strong></div>
+                  <div>Measured Lab: <span id="demoMeasuredLab" style="font-family:monospace;">--</span> • Distance: <strong id="demoDistance">--</strong></div>
+                </div>
+              </div>
+            </div>
             <div class="status-card" id="aiStatusCard" style="display:none;"><span class="status-icon" style="color:#c084fc;border-color:rgba(168,85,247,0.5);box-shadow:0 0 16px rgba(168,85,247,0.35);">AI</span><div><small>On-Device AI</small><strong id="aiStatusValue">AI Guided</strong><p id="aiStatusDetail">Localized ROIs & corners</p></div></div>
             <div class="status-card invalid" id="crossCheckCard" style="display:none;"><span class="status-icon">⚠</span><div><small>Cross-Check</small><strong id="crossCheckValue">Cross-Check Alert</strong><p id="crossCheckDetail">Discrepancy detected</p></div></div>
           </div>
