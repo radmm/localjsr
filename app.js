@@ -107,7 +107,7 @@ function classifyConfidence(distance) {
   return 'Low';
 }
 
-function estimateBandFromLab(lab) {
+function estimateBandFromLab(lab, baselineLab = null) {
   let bestMatch = { ppm: 0, label: getBandLabel(0), distance: Number.POSITIVE_INFINITY };
   for (const ppm of H2S_BANDS) {
     const target = BAND_BASE_LAB[ppm];
@@ -116,6 +116,19 @@ function estimateBandFromLab(lab) {
       bestMatch = { ppm, label: getBandLabel(ppm), distance: currentDistance };
     }
   }
+
+  // Optical density / stain darkening check if chromaticity was desaturated by camera AWB
+  if (baselineLab && bestMatch.ppm === 0) {
+    const deltaL = Math.max(0, baselineLab[0] - lab[0]);
+    if (deltaL >= 38) bestMatch = { ppm: 100, label: getBandLabel(100), distance: deltaL };
+    else if (deltaL >= 30) bestMatch = { ppm: 50, label: getBandLabel(50), distance: deltaL };
+    else if (deltaL >= 23) bestMatch = { ppm: 20, label: getBandLabel(20), distance: deltaL };
+    else if (deltaL >= 17) bestMatch = { ppm: 10, label: getBandLabel(10), distance: deltaL };
+    else if (deltaL >= 12) bestMatch = { ppm: 5, label: getBandLabel(5), distance: deltaL };
+    else if (deltaL >= 8) bestMatch = { ppm: 2, label: getBandLabel(2), distance: deltaL };
+    else if (deltaL >= 4) bestMatch = { ppm: 1, label: getBandLabel(1), distance: deltaL };
+  }
+
   return {
     ppm: bestMatch.ppm,
     label: bestMatch.label,
@@ -140,7 +153,7 @@ function computeCompensationFactor(sealedReferenceLab) {
 }
 
 function summarizeReading({ stripLab, sealedReferenceLab, durationMinutes = 15, compensationFactor = 1 }) {
-  const band = estimateBandFromLab(stripLab);
+  const band = estimateBandFromLab(stripLab, sealedReferenceLab);
   const drift = estimateTemperatureHumidityFromDrift(sealedReferenceLab);
   const compensatedDose = Math.max(0, band.ppm * durationMinutes * compensationFactor);
   let tempHumidityDriftFlag = 'Low drift';
@@ -602,11 +615,10 @@ function createCalibratedBadgeCanvas(ppm = 20) {
   }
 
   function paintRoiPixels(roi, color) {
-    const inner = shrinkRoi(roi);
-    const left = Math.floor(inner.x * width);
-    const right = Math.ceil((inner.x + inner.w) * width);
-    const top = Math.floor(inner.y * height);
-    const bottom = Math.ceil((inner.y + inner.h) * height);
+    const left = Math.floor(roi.x * width);
+    const right = Math.ceil((roi.x + roi.w) * width);
+    const top = Math.floor(roi.y * height);
+    const bottom = Math.ceil((roi.y + roi.h) * height);
     for (let y = top; y < bottom; y += 1) {
       for (let x = left; x < right; x += 1) {
         const idx = (y * width + x) * 4;
@@ -622,14 +634,14 @@ function createCalibratedBadgeCanvas(ppm = 20) {
   paintRoiPixels(ROI_LAYOUT.sealedReference, [220, 220, 210]);
 
   const stripRgbByPpm = {
-    0: [184, 184, 181],
-    1: [210, 195, 175],
-    2: [200, 178, 150],
-    5: [190, 160, 130],
-    10: [180, 142, 115],
+    0: [210, 215, 210],
+    1: [210, 190, 170],
+    2: [215, 175, 150],
+    5: [210, 155, 125],
+    10: [210, 140, 100],
     20: [200, 120, 80],
-    50: [145, 100, 80],
-    100: [120, 75, 60],
+    50: [180, 90, 40],
+    100: [170, 70, 10],
   };
   paintRoiPixels(ROI_LAYOUT.strip, stripRgbByPpm[ppm] || stripRgbByPpm[20]);
 
@@ -652,9 +664,13 @@ function computeBestEffortReading(capture, reading) {
   }
 
   const referenceReadings = REFERENCE_SWATCHES.map((swatch) => roiMedians[swatch.key] || swatch.color);
-  let correct;
+  let correct = (c) => c;
   try {
-    correct = fitCorrection(referenceReadings);
+    const candidateCorrect = fitCorrection(referenceReadings);
+    const residual = Math.sqrt(referenceReadings.reduce((total, swatchReading, index) => total + distance(candidateCorrect(swatchReading), REFERENCE_SWATCHES[index].color) ** 2, 0) / referenceReadings.length);
+    if (residual <= 45) {
+      correct = candidateCorrect;
+    }
   } catch (e) {
     correct = (c) => c;
   }
@@ -1058,11 +1074,15 @@ function initBrowser() {
   }
 
   document.querySelector('#sampleBadgeButton')?.addEventListener('click', () => {
-    loadAndAnalyzeSampleBadge(20);
+    const select = document.querySelector('#samplePpmSelect');
+    const ppm = select ? Number(select.value) : 20;
+    loadAndAnalyzeSampleBadge(ppm);
   });
 
   document.querySelector('#loadSampleBadgeFromRetake')?.addEventListener('click', () => {
-    loadAndAnalyzeSampleBadge(20);
+    const select = document.querySelector('#samplePpmSelect');
+    const ppm = select ? Number(select.value) : 20;
+    loadAndAnalyzeSampleBadge(ppm);
   });
 
   document.querySelector('#forceEstimateButton')?.addEventListener('click', () => {

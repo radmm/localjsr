@@ -10,6 +10,7 @@
     "test": "node tests.js"
   },
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "sharp": "^0.35.5"
   }
 }

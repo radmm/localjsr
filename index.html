@@ -3,15 +3,28 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f3f5f1">
+  <meta name="theme-color" content="#17221e">
+  <meta name="description" content="Industrial H2S dosimeter badge reader with on-device colorimetry, drift compensation, and offline exposure tracking.">
   <title>H2S Badge Reader</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <!-- iOS Safari home screen meta tags -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="H2S Badge">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
       <div class="brand"><span class="brand-mark">H₂S</span><span>Badge Reader</span></div>
-      <div class="offline-chip"><i></i> Offline mode</div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button id="pwaInstallButton" class="secondary-button" style="display:none;height:34px;padding:0 12px;font-size:11px;border-radius:4px;cursor:pointer;" type="button">⬇ Install App</button>
+        <div class="offline-chip"><i></i> Offline mode</div>
+      </div>
     </header>
 
     <section class="workspace">
@@ -42,6 +55,16 @@
             <button class="secondary-button" id="uploadButton">Upload image</button>
             <input id="imageInput" type="file" accept="image/*" hidden>
             <button class="capture-button" id="captureButton"><span></span> Capture 3 frames</button>
+            <select id="samplePpmSelect" class="secondary-button" style="padding:0 10px;height:46px;cursor:pointer;font-weight:600;" aria-label="Select exposure level to test">
+              <option value="20" selected>20 ppm (High)</option>
+              <option value="10">10 ppm (Threshold)</option>
+              <option value="50">50 ppm (Critical)</option>
+              <option value="5">5 ppm (Moderate)</option>
+              <option value="2">2 ppm (Low)</option>
+              <option value="1">1 ppm (Trace)</option>
+              <option value="0">0 ppm (Clean)</option>
+              <option value="100">100 ppm (Lethal)</option>
+            </select>
             <button class="secondary-button" id="sampleBadgeButton" type="button" title="Test with calibrated H2S badge">Test badge</button>
           </div>
           <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
@@ -131,5 +154,52 @@
     </section>
   </div>
   <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+          .then((registration) => {
+            console.log('ServiceWorker registered with scope:', registration.scope);
+          })
+          .catch((error) => {
+            console.error('ServiceWorker registration failed:', error);
+          });
+      });
+    }
+
+    // PWA Install prompt handling
+    let deferredInstallPrompt = null;
+    const installBtn = document.querySelector('#pwaInstallButton');
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+    if (!isStandalone) {
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredInstallPrompt = e;
+        if (installBtn) installBtn.style.display = 'inline-flex';
+      });
+
+      if (installBtn) {
+        installBtn.addEventListener('click', async () => {
+          if (deferredInstallPrompt) {
+            deferredInstallPrompt.prompt();
+            const choiceResult = await deferredInstallPrompt.userChoice;
+            if (choiceResult.outcome === 'accepted') {
+              installBtn.style.display = 'none';
+            }
+            deferredInstallPrompt = null;
+          } else {
+            // iOS Safari or non-automated browser
+            alert('To install this app on your device:\n\n• iOS: Tap Share then "Add to Home Screen"\n• Android/Chrome: Tap browser menu (⋮) then "Install app"');
+          }
+        });
+      }
+
+      window.addEventListener('appinstalled', () => {
+        if (installBtn) installBtn.style.display = 'none';
+        deferredInstallPrompt = null;
+      });
+    }
+  </script>
 </body>
 </html>
