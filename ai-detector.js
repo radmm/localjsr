@@ -4,6 +4,9 @@
  * Fully offline, lazy-loaded, zero network calls, runs in browser and Node.js.
  */
 
+(function () {
+  'use strict';
+
 const DEFAULT_MODEL_VERSION = 'h2s-badge-ai-v1.2';
 
 const FALLBACK_MODEL = {
@@ -415,3 +418,6 @@ if (typeof window !== 'undefined') {
     runCrossCheck,
   };
 }
+
+})();
+
