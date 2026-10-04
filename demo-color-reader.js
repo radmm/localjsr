@@ -1,12 +1,14 @@
 /**
  * H2S Badge Reader - Color-First Demo Mode Module
- * - 0 ppm reference ROI + four sample ROIs (S1 to S4)
+ * Two ROIs only: one 0 ppm reference and one sample.
  * - Clean offscreen canvas sampling with optional 6-swatch correction
  * - Live color swatches, measured Lab (2 decimals)
  * - Chart-aligned Lab: measured sample Lab + (45.77 - Lref, 34.05 - aref, -19.46 - bref)
  * - Delta vs reference: dL, da, db, dE
  * - Nearest chart match with weights L 0.5, a 0.5, b 2 (25 C default, selectable)
+ * - Single readout only (Reference & Sample patch)
  * - Stability: 5-frame median, spread (max - min), Stable / Hold steady indicator
+ * - Uniformity (stddev <= 24) and clipping (<= 2%) quality gates for both patches
  * - Offline compatible
  */
 
@@ -19,7 +21,7 @@ const DEMO_ESTIMATOR_VERSION = 'color-first-v2.0';
 const CHART_REF_POINT = { L: 45.77, a: 34.05, b: -19.46 };
 
 // Reference table (ppm, temp C, L*, a*, b*)
-const CHART_DEMO_REFERENCE_TABLE = [
+var CHART_DEMO_REFERENCE_TABLE = [
   { ppm: 0,  tempC: 15, L: 45.77, a: 34.05, b: -19.46 },
   { ppm: 10, tempC: 5,  L: 39.43, a: 33.72, b: -9.73 },
   { ppm: 10, tempC: 10, L: 45.62, a: 34.82, b: -9.83 },
@@ -45,14 +47,31 @@ const CHART_DEMO_REFERENCE_TABLE = [
 
 const DEFAULT_DEMO_MATCH_THRESHOLD = 25.0;
 const DEMO_STABILITY_THRESHOLD = 3.5; // Max spread across L*, a*, b* for stability
+const ROI_STDDEV_THRESHOLD = 24.0;    // Quality gate: max channel stddev for uniformity
+const CLIPPED_PIXEL_THRESHOLD = 0.02; // Quality gate: max fraction of pixels near 0 or 255
 
-// One 0 ppm reference ROI + four sample ROIs (S1 to S4)
+// Two ROIs only: one 0 ppm reference and one sample
 const DEMO_ROIS = {
-  ref: { key: 'ref', name: 'Reference (0 ppm)', shortName: 'REF', x: 0.10, y: 0.46, w: 0.13, h: 0.26, color: '#38bdf8' },
-  s1:  { key: 's1',  name: 'Sample 1',          shortName: 'S1',  x: 0.28, y: 0.46, w: 0.13, h: 0.26, color: '#4ade80' },
-  s2:  { key: 's2',  name: 'Sample 2',          shortName: 'S2',  x: 0.46, y: 0.46, w: 0.13, h: 0.26, color: '#facc15' },
-  s3:  { key: 's3',  name: 'Sample 3',          shortName: 'S3',  x: 0.64, y: 0.46, w: 0.13, h: 0.26, color: '#fb923c' },
-  s4:  { key: 's4',  name: 'Sample 4',          shortName: 'S4',  x: 0.82, y: 0.46, w: 0.13, h: 0.26, color: '#f87171' },
+  ref: {
+    key: 'ref',
+    name: 'Reference (0 ppm)',
+    shortName: 'REF',
+    x: 0.18,
+    y: 0.38,
+    w: 0.28,
+    h: 0.36,
+    color: '#38bdf8',
+  },
+  sample: {
+    key: 'sample',
+    name: 'Sample Patch',
+    shortName: 'SMP',
+    x: 0.54,
+    y: 0.38,
+    w: 0.28,
+    h: 0.36,
+    color: '#4ade80',
+  },
 };
 
 function clamp(value, min, max) {
@@ -124,7 +143,8 @@ function labToRgb(lab) {
 }
 
 /**
- * Chart-aligned Lab: measured sample Lab plus (45.77 - Lref, 34.05 - aref, -19.46 - bref)
+ * Compute chart-aligned Lab:
+ * measured sample Lab plus (45.77 - Lref, 34.05 - aref, -19.46 - bref)
  */
 function computeAlignedLab(sampleLab, refLab) {
   const dL = CHART_REF_POINT.L - refLab[0];
@@ -149,7 +169,7 @@ function computeDeltaVsRef(sampleLab, refLab) {
 }
 
 /**
- * Distance = weighted Euclidean in Lab with weights L 0.5, a 0.5, b 2
+ * Weighted Euclidean distance in Lab with weights L 0.5, a 0.5, b 2
  */
 function calculateWeightedDistance(lab, row) {
   const dL = lab[0] - row.L;
@@ -243,7 +263,109 @@ function sampleRoiMedian(context, width, height, roi) {
 }
 
 /**
- * Samples all 5 Demo ROIs from a clean canvas
+ * Evaluates uniformity gate (stddev <= 24) and clipping gate (clipped <= 2%) for an ROI
+ */
+function evaluatePatchGates(context, width, height, roi) {
+  const margin = 0.20;
+  const innerX = roi.x + roi.w * margin;
+  const innerY = roi.y + roi.h * margin;
+  const innerW = roi.w * (1 - margin * 2);
+  const innerH = roi.h * (1 - margin * 2);
+
+  const x = Math.max(0, Math.floor(innerX * width));
+  const y = Math.max(0, Math.floor(innerY * height));
+  const right = Math.min(width, Math.ceil((innerX + innerW) * width));
+  const bottom = Math.min(height, Math.ceil((innerY + innerH) * height));
+
+  const w = right - x;
+  const h = bottom - y;
+  if (w <= 0 || h <= 0) {
+    return {
+      stddev: 0,
+      clippedFraction: 0,
+      uniformityPassed: true,
+      clippingPassed: true,
+      passed: true,
+      failureReason: null,
+    };
+  }
+
+  const imgData = context.getImageData(x, y, w, h);
+  const data = imgData.data;
+  const totalPixels = data.length / 4;
+  let clippedCount = 0;
+
+  const channels = [[], [], []];
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    channels[0].push(r);
+    channels[1].push(g);
+    channels[2].push(b);
+    if (r <= 2 || r >= 253 || g <= 2 || g >= 253 || b <= 2 || b >= 253) {
+      clippedCount++;
+    }
+  }
+
+  const clippedFraction = totalPixels > 0 ? clippedCount / totalPixels : 0;
+
+  const channelStddev = channels.map((vals) => {
+    if (!vals.length) return 0;
+    const mean = vals.reduce((sum, v) => sum + v, 0) / vals.length;
+    const variance = vals.reduce((sum, v) => sum + (v - mean) ** 2, 0) / vals.length;
+    return Math.sqrt(variance);
+  });
+
+  const maxStddev = Math.max(...channelStddev);
+  const uniformityPassed = maxStddev <= ROI_STDDEV_THRESHOLD;
+  const clippingPassed = clippedFraction <= CLIPPED_PIXEL_THRESHOLD;
+  const passed = uniformityPassed && clippingPassed;
+
+  let failureReason = null;
+  if (!uniformityPassed) {
+    failureReason = 'Patch not uniform, retake';
+  } else if (!clippingPassed) {
+    failureReason = 'Too bright or dark';
+  }
+
+  return {
+    stddev: Number(maxStddev.toFixed(2)),
+    clippedFraction: Number(clippedFraction.toFixed(4)),
+    uniformityPassed,
+    clippingPassed,
+    passed,
+    failureReason,
+  };
+}
+
+/**
+ * Checks quality gates for both patches (ref & sample)
+ */
+function checkDemoQualityGates(canvas, rois = DEMO_ROIS) {
+  const ctx = canvas.getContext('2d');
+  const results = {};
+  let allPassed = true;
+  let firstRefusal = null;
+
+  for (const [key, roi] of Object.entries(rois)) {
+    const gateResult = evaluatePatchGates(ctx, canvas.width, canvas.height, roi);
+    results[key] = gateResult;
+    if (!gateResult.passed) {
+      allPassed = false;
+      if (!firstRefusal) firstRefusal = gateResult.failureReason;
+    }
+  }
+
+  return {
+    passed: allPassed,
+    refusalReason: firstRefusal,
+    gates: results,
+  };
+}
+
+/**
+ * Samples the 2 Demo ROIs (ref + sample) from a clean offscreen canvas
  */
 function sampleDemoCanvas(canvas, { correction = null } = {}) {
   const width = canvas.width;
@@ -253,6 +375,9 @@ function sampleDemoCanvas(canvas, { correction = null } = {}) {
 
   const roiMedians = {};
   const measuredLab = {};
+  const gates = {};
+  let allGatesPassed = true;
+  let gateRefusal = null;
 
   for (const [key, roi] of Object.entries(DEMO_ROIS)) {
     let rawRgb = sampleRoiMedian(ctx, width, height, roi);
@@ -266,9 +391,28 @@ function sampleDemoCanvas(canvas, { correction = null } = {}) {
     }
     roiMedians[key] = correctedRgb;
     measuredLab[key] = rgbToLab(correctedRgb);
+
+    const gateResult = evaluatePatchGates(ctx, width, height, roi);
+    gates[key] = gateResult;
+    if (!gateResult.passed) {
+      allGatesPassed = false;
+      if (!gateRefusal) gateRefusal = gateResult.failureReason;
+    }
   }
 
-  return { roiMedians, measuredLab };
+  // Backwards compatibility alias: s1 -> sample
+  if (roiMedians.sample) {
+    roiMedians.s1 = roiMedians.sample;
+    measuredLab.s1 = measuredLab.sample;
+  }
+
+  return {
+    roiMedians,
+    measuredLab,
+    gates,
+    allGatesPassed,
+    gateRefusal,
+  };
 }
 
 /**
@@ -294,7 +438,7 @@ class DemoStabilityBuffer {
     }
 
     const count = this.frames.length;
-    const roiKeys = Object.keys(DEMO_ROIS);
+    const roiKeys = ['ref', 'sample'];
 
     // If single frame (e.g. uploaded static image), immediately stable
     if (count === 1) {
@@ -309,6 +453,7 @@ class DemoStabilityBuffer {
         spreads,
         measuredLab: single.measuredLab,
         roiMedians: single.roiMedians,
+        frameCount: 1,
       };
       return this.lastStableResult;
     }
@@ -319,9 +464,10 @@ class DemoStabilityBuffer {
     let overallMaxSpread = 0;
 
     for (const k of roiKeys) {
-      const L_vals = this.frames.map((f) => f.measuredLab[k][0]);
-      const a_vals = this.frames.map((f) => f.measuredLab[k][1]);
-      const b_vals = this.frames.map((f) => f.measuredLab[k][2]);
+      const sourceKey = this.frames[0].measuredLab[k] ? k : (k === 'sample' && this.frames[0].measuredLab.s1 ? 's1' : k);
+      const L_vals = this.frames.map((f) => f.measuredLab[sourceKey]?.[0] ?? 0);
+      const a_vals = this.frames.map((f) => f.measuredLab[sourceKey]?.[1] ?? 0);
+      const b_vals = this.frames.map((f) => f.measuredLab[sourceKey]?.[2] ?? 0);
 
       const spreadL = Number((Math.max(...L_vals) - Math.min(...L_vals)).toFixed(2));
       const spreadA = Number((Math.max(...a_vals) - Math.min(...a_vals)).toFixed(2));
@@ -343,9 +489,9 @@ class DemoStabilityBuffer {
         Number(calcMedian(b_vals).toFixed(2)),
       ];
 
-      const r_vals = this.frames.map((f) => f.roiMedians[k][0]);
-      const g_vals = this.frames.map((f) => f.roiMedians[k][1]);
-      const bl_vals = this.frames.map((f) => f.roiMedians[k][2]);
+      const r_vals = this.frames.map((f) => f.roiMedians[sourceKey]?.[0] ?? 128);
+      const g_vals = this.frames.map((f) => f.roiMedians[sourceKey]?.[1] ?? 128);
+      const bl_vals = this.frames.map((f) => f.roiMedians[sourceKey]?.[2] ?? 128);
 
       medianRgb[k] = [
         Math.round(calcMedian(r_vals)),
@@ -353,6 +499,10 @@ class DemoStabilityBuffer {
         Math.round(calcMedian(bl_vals)),
       ];
     }
+
+    // Alias s1 for backwards compatibility
+    medianLab.s1 = medianLab.sample;
+    medianRgb.s1 = medianRgb.sample;
 
     const isStable = count >= this.size && overallMaxSpread <= this.threshold;
 
@@ -374,7 +524,7 @@ class DemoStabilityBuffer {
 }
 
 /**
- * Complete color-first readout processor for given 5 ROI Lab values
+ * Color-first readout processor for the 2 ROIs (ref + sample)
  */
 function processDemoColorReadout(sampleLabs, { tempC = 25, threshold = DEFAULT_DEMO_MATCH_THRESHOLD } = {}) {
   const refLab = sampleLabs.ref;
@@ -382,49 +532,67 @@ function processDemoColorReadout(sampleLabs, { tempC = 25, threshold = DEFAULT_D
     throw new Error('Reference Lab (0 ppm) is required.');
   }
 
-  const results = {};
-  const alignedLabs = {};
-  const deltas = {};
-  const matches = {};
-
-  for (const [key, roi] of Object.entries(DEMO_ROIS)) {
-    const measured = sampleLabs[key];
-    const isRef = key === 'ref';
-
-    const aligned = isRef
-      ? [CHART_REF_POINT.L, CHART_REF_POINT.a, CHART_REF_POINT.b]
-      : computeAlignedLab(measured, refLab);
-
-    const delta = isRef
-      ? { dL: 0, da: 0, db: 0, dE: 0 }
-      : computeDeltaVsRef(measured, refLab);
-
-    const match = findNearestChartMatch(aligned, { tempC, threshold });
-
-    alignedLabs[key] = aligned;
-    deltas[key] = delta;
-    matches[key] = match;
-
-    results[key] = {
-      key,
-      name: roi.name,
-      shortName: roi.shortName,
-      color: roi.color,
-      measuredLab: measured,
-      alignedLab: aligned,
-      deltaVsRef: delta,
-      nearestMatch: match,
-    };
+  const sampleLab = sampleLabs.sample || sampleLabs.s1;
+  if (!sampleLab) {
+    throw new Error('Sample Lab is required.');
   }
+
+  // 1. Reference: aligned to chart is fixed (45.77, 34.05, -19.46)
+  const refAligned = [CHART_REF_POINT.L, CHART_REF_POINT.a, CHART_REF_POINT.b];
+  const refDelta = { dL: 0, da: 0, db: 0, dE: 0 };
+  const refMatch = findNearestChartMatch(refAligned, { tempC, threshold });
+
+  // 2. Sample: chart-aligned Lab = measured sample Lab + (45.77 - Lref, 34.05 - aref, -19.46 - bref)
+  const sampleAligned = computeAlignedLab(sampleLab, refLab);
+  const sampleDelta = computeDeltaVsRef(sampleLab, refLab);
+  const sampleMatch = findNearestChartMatch(sampleAligned, { tempC, threshold });
+
+  const refResult = {
+    key: 'ref',
+    name: 'Reference (0 ppm)',
+    shortName: 'REF',
+    color: DEMO_ROIS.ref.color,
+    measuredLab: refLab,
+    alignedLab: refAligned,
+    deltaVsRef: refDelta,
+    nearestMatch: refMatch,
+  };
+
+  const sampleResult = {
+    key: 'sample',
+    name: 'Sample Patch',
+    shortName: 'SMP',
+    color: DEMO_ROIS.sample.color,
+    measuredLab: sampleLab,
+    alignedLab: sampleAligned,
+    deltaVsRef: sampleDelta,
+    nearestMatch: sampleMatch,
+  };
+
+  const alignedLabs = {
+    ref: refAligned,
+    sample: sampleAligned,
+    s1: sampleAligned,
+  };
+
+  const deltas = {
+    ref: refDelta,
+    sample: sampleDelta,
+    s1: sampleDelta,
+  };
+
+  const matches = {
+    ref: refMatch,
+    sample: sampleMatch,
+    s1: sampleMatch,
+  };
 
   return {
     version: DEMO_ESTIMATOR_VERSION,
     tempC,
-    ref: results.ref,
-    s1: results.s1,
-    s2: results.s2,
-    s3: results.s3,
-    s4: results.s4,
+    ref: refResult,
+    sample: sampleResult,
+    s1: sampleResult, // alias
     alignedLabs,
     deltas,
     matches,
@@ -432,9 +600,9 @@ function processDemoColorReadout(sampleLabs, { tempC = 25, threshold = DEFAULT_D
 }
 
 /**
- * Creates a synthetic demo badge canvas with the 5 ROIs (ref + S1 to S4)
+ * Creates a synthetic demo badge canvas with the two ROIs (ref + sample)
  */
-function createDemoBadgeCanvas({ tempC = 25, ppmValues = [10, 20, 40, 50], tint = [0, 0, 0] } = {}) {
+function createDemoBadgeCanvas({ tempC = 25, samplePpm = 20, tint = [0, 0, 0], noiseStddev = 0, clippedPixels = 0, clipRatio = 0, saturated = false } = {}) {
   const width = 640;
   const height = 480;
 
@@ -479,24 +647,19 @@ function createDemoBadgeCanvas({ tempC = 25, ppmValues = [10, 20, 40, 50], tint 
   const refRow = CHART_DEMO_REFERENCE_TABLE.find((r) => r.ppm === 0);
   const refRgb = labToRgb([refRow.L + tint[0], refRow.a + tint[1], refRow.b + tint[2]]);
 
-  const sampleRows = ppmValues.map((ppm) => {
-    const row = CHART_DEMO_REFERENCE_TABLE.find(
-      (r) => r.ppm === ppm && (tempC === 'all' || Math.abs(r.tempC - tempC) < 1e-4)
-    ) || refRow;
-    return labToRgb([row.L + tint[0], row.a + tint[1], row.b + tint[2]]);
-  });
+  const sampleRow = CHART_DEMO_REFERENCE_TABLE.find(
+    (r) => r.ppm === samplePpm && (tempC === 'all' || Math.abs(r.tempC - tempC) < 1e-4)
+  ) || refRow;
+  const sampleRgb = labToRgb([sampleRow.L + tint[0], sampleRow.a + tint[1], sampleRow.b + tint[2]]);
 
   const colors = {
     ref: refRgb,
-    s1: sampleRows[0],
-    s2: sampleRows[1],
-    s3: sampleRows[2],
-    s4: sampleRows[3],
+    sample: sampleRgb,
   };
 
   if (isBrowserCanvas && ctx) {
-    // Browser canvas drawing
-    ctx.fillStyle = '#1e293b';
+    // Background card
+    ctx.fillStyle = '#0f172a';
     ctx.fillRect(0, 0, width, height);
 
     ctx.fillStyle = '#f8fafc';
@@ -526,13 +689,34 @@ function createDemoBadgeCanvas({ tempC = 25, ppmValues = [10, 20, 40, 50], tint 
       const rw = Math.floor(roi.w * width);
       const rh = Math.floor(roi.h * height);
       const c = colors[key];
+      let pixelIndex = 0;
       for (let y = ry; y < ry + rh; y++) {
         for (let x = rx; x < rx + rw; x++) {
           const idx = (y * width + x) * 4;
-          px[idx] = c[0];
-          px[idx + 1] = c[1];
-          px[idx + 2] = c[2];
+          let r = c[0];
+          let g = c[1];
+          let b = c[2];
+
+          // Noise injection for uniformity test (stddev > 24)
+          if (noiseStddev > 0 && key === 'sample') {
+            const noise = ((pixelIndex % 2 === 0 ? 1 : -1) * noiseStddev * 1.5);
+            r = clamp(Math.round(r + noise), 10, 240);
+            g = clamp(Math.round(g + noise), 10, 240);
+            b = clamp(Math.round(b + noise), 10, 240);
+          }
+
+          // Clipping injection for clipping test (> 2% saturated pixels)
+          if (key === 'sample' && (saturated || clippedPixels > 0 || clipRatio > 0)) {
+            r = 255;
+            g = 255;
+            b = 255;
+          }
+
+          px[idx] = r;
+          px[idx + 1] = g;
+          px[idx + 2] = b;
           px[idx + 3] = 255;
+          pixelIndex++;
         }
       }
     }
@@ -541,56 +725,39 @@ function createDemoBadgeCanvas({ tempC = 25, ppmValues = [10, 20, 40, 50], tint 
   return canvas;
 }
 
-// Module export
+const DemoColorReaderModule = {
+  DEMO_ESTIMATOR_VERSION,
+  CHART_REF_POINT,
+  CHART_DEMO_REFERENCE_TABLE,
+  DEMO_ROIS,
+  DEFAULT_DEMO_MATCH_THRESHOLD,
+  DEMO_STABILITY_THRESHOLD,
+  ROI_STDDEV_THRESHOLD,
+  CLIPPED_PIXEL_THRESHOLD,
+  clamp,
+  srgbToLinearChannel,
+  linearToSrgbChannel,
+  rgbToLab,
+  labToRgb,
+  computeAlignedLab,
+  computeDeltaVsRef,
+  calculateWeightedDistance,
+  findNearestChartMatch,
+  sampleRoiMedian,
+  evaluatePatchGates,
+  checkDemoQualityGates,
+  sampleDemoCanvas,
+  DemoStabilityBuffer,
+  processDemoColorReadout,
+  createDemoBadgeCanvas,
+};
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    DEMO_ESTIMATOR_VERSION,
-    CHART_REF_POINT,
-    CHART_DEMO_REFERENCE_TABLE,
-    DEMO_ROIS,
-    DEFAULT_DEMO_MATCH_THRESHOLD,
-    DEMO_STABILITY_THRESHOLD,
-    clamp,
-    srgbToLinearChannel,
-    linearToSrgbChannel,
-    rgbToLab,
-    labToRgb,
-    computeAlignedLab,
-    computeDeltaVsRef,
-    calculateWeightedDistance,
-    findNearestChartMatch,
-    sampleRoiMedian,
-    sampleDemoCanvas,
-    DemoStabilityBuffer,
-    processDemoColorReadout,
-    createDemoBadgeCanvas,
-  };
+  module.exports = DemoColorReaderModule;
 }
 
 if (typeof window !== 'undefined') {
-  window.DemoColorReader = {
-    DEMO_ESTIMATOR_VERSION,
-    CHART_REF_POINT,
-    CHART_DEMO_REFERENCE_TABLE,
-    DEMO_ROIS,
-    DEFAULT_DEMO_MATCH_THRESHOLD,
-    DEMO_STABILITY_THRESHOLD,
-    clamp,
-    srgbToLinearChannel,
-    linearToSrgbChannel,
-    rgbToLab,
-    labToRgb,
-    computeAlignedLab,
-    computeDeltaVsRef,
-    calculateWeightedDistance,
-    findNearestChartMatch,
-    sampleRoiMedian,
-    sampleDemoCanvas,
-    DemoStabilityBuffer,
-    processDemoColorReadout,
-    createDemoBadgeCanvas,
-  };
+  window.DemoColorReader = DemoColorReaderModule;
 }
 
 })();
-

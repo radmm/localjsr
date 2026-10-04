@@ -344,15 +344,62 @@ button, input, select {
   color: var(--accent-primary);
 }
 
-.match-detail.no-match {
-  color: var(--status-red-text);
-  font-weight: 600;
+.match-detail.no-match,
+.match-detail strong.no-match {
+  color: #f87171 !important;
+  font-weight: 700;
 }
 
 .match-cell-sub {
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 2px;
+}
+
+.demo-two-rois {
+  grid-template-columns: 1fr !important;
+}
+
+@media (min-width: 680px) {
+  .demo-two-rois {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+.demo-patch-card.highlight-card {
+  border-color: rgba(74, 222, 128, 0.35);
+  box-shadow: 0 0 24px -6px rgba(74, 222, 128, 0.12);
+}
+
+.demo-gate-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.gate-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.gate-tag.pass {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.gate-tag.fail {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+  border: 1px solid rgba(248, 113, 113, 0.35);
 }
 
 /* ==========================================================================

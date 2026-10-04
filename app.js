@@ -261,7 +261,7 @@ function rgbToLab(rgb) {
   return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
 }
 
-const CHART_DEMO_REFERENCE_TABLE = [
+const APP_H2S_CHART_DEMO_TABLE = [
   { ppm: 0,  tempC: 15, L: 45.77, a: 34.05, b: -19.46 },
   { ppm: 10, tempC: 5,  L: 39.43, a: 33.72, b: -9.73 },
   { ppm: 10, tempC: 10, L: 45.62, a: 34.82, b: -9.83 },
@@ -295,12 +295,14 @@ function calculateChartDemoDistance(lab, row) {
 }
 
 function estimateFromChartDemo(stripLab, { userTemperature = null, threshold = CHART_DEMO_DISTANCE_THRESHOLD } = {}) {
-  let candidateRows = CHART_DEMO_REFERENCE_TABLE;
+  let candidateRows = (typeof window !== 'undefined' && window.DemoColorReader && window.DemoColorReader.CHART_DEMO_REFERENCE_TABLE)
+    || (DemoColorReaderModule && DemoColorReaderModule.CHART_DEMO_REFERENCE_TABLE)
+    || APP_H2S_CHART_DEMO_TABLE;
   const hasUserTemp = userTemperature !== null && userTemperature !== undefined && !Number.isNaN(Number(userTemperature));
 
   if (hasUserTemp) {
     const targetTemp = Number(userTemperature);
-    const filtered = CHART_DEMO_REFERENCE_TABLE.filter((row) => row.ppm === 0 || Math.abs(row.tempC - targetTemp) < 1e-4);
+    const filtered = candidateRows.filter((row) => row.ppm === 0 || Math.abs(row.tempC - targetTemp) < 1e-4);
     if (filtered.length > 0) candidateRows = filtered;
   }
 
@@ -643,6 +645,9 @@ function calculateReading(frames, { backgroundRGB = null, rois = null } = {}) {
       ...readout,
       roiMedians: sampled.roiMedians,
       measuredLab: sampled.measuredLab,
+      gates: sampled.gates,
+      allGatesPassed: sampled.allGatesPassed,
+      gateRefusal: sampled.gateRefusal,
       stability,
     };
   }
@@ -1306,7 +1311,7 @@ function updateDemoColorReadoutUI(demoResult) {
     stabilityBadge.dataset.hasReadout = 'true';
   }
 
-  // Reference card (0 ppm)
+  // Reference patch (0 ppm)
   if (demoResult.ref) {
     const ref = demoResult.ref;
     const swatch = document.querySelector('#demoSwatchRef');
@@ -1326,49 +1331,83 @@ function updateDemoColorReadoutUI(demoResult) {
     if (matchEl && ref.nearestMatch) {
       matchEl.innerHTML = `<strong>${ref.nearestMatch.ppm ?? 0} ppm</strong> (dist: ${(ref.nearestMatch.distance ?? 0).toFixed(2)})`;
     }
+    const gatesRef = document.querySelector('#demoGatesRef');
+    if (gatesRef && demoResult.gates?.ref) {
+      const g = demoResult.gates.ref;
+      gatesRef.innerHTML = `
+        <span class="gate-tag ${g.uniformityPassed ? 'pass' : 'fail'}">Uniformity: ${g.uniformityPassed ? 'Pass' : 'Fail (stddev ' + g.stddev + ')'}</span>
+        <span class="gate-tag ${g.clippingPassed ? 'pass' : 'fail'}">Clipping: ${g.clippingPassed ? 'Pass' : 'Fail (' + (g.clippedFraction * 100).toFixed(1) + '%)'}</span>
+      `;
+    }
   }
 
-  // Samples S1 to S4
-  ['s1', 's2', 's3', 's4'].forEach((key) => {
-    const cap = key.toUpperCase();
-    const item = demoResult[key];
-    if (!item) return;
-
-    const swatch = document.querySelector(`#demoSwatch${cap}`);
-    if (swatch && demoResult.roiMedians?.[key]) {
-      const rgb = demoResult.roiMedians[key];
-      swatch.style.backgroundColor = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+  // Single Sample Patch Readout
+  const sample = demoResult.sample || demoResult.s1;
+  if (sample) {
+    const sampleMedian = demoResult.roiMedians?.sample || demoResult.roiMedians?.s1;
+    const swatch = document.querySelector('#demoSwatchSample') || document.querySelector('#demoSwatchS1');
+    if (swatch && sampleMedian) {
+      swatch.style.backgroundColor = `rgb(${sampleMedian[0]}, ${sampleMedian[1]}, ${sampleMedian[2]})`;
+    }
+    const swatchS1 = document.querySelector('#demoSwatchS1');
+    if (swatchS1 && sampleMedian) {
+      swatchS1.style.backgroundColor = `rgb(${sampleMedian[0]}, ${sampleMedian[1]}, ${sampleMedian[2]})`;
     }
 
-    const measuredEl = document.querySelector(`#demoMeasured${cap}`);
-    if (measuredEl && item.measuredLab) {
-      measuredEl.textContent = `L*: ${item.measuredLab[0].toFixed(2)}, a*: ${item.measuredLab[1].toFixed(2)}, b*: ${item.measuredLab[2].toFixed(2)}`;
+    const measuredEl = document.querySelector('#demoMeasuredSample') || document.querySelector('#demoMeasuredS1');
+    if (measuredEl && sample.measuredLab) {
+      measuredEl.textContent = `L*: ${sample.measuredLab[0].toFixed(2)}, a*: ${sample.measuredLab[1].toFixed(2)}, b*: ${sample.measuredLab[2].toFixed(2)}`;
+    }
+    const measuredS1 = document.querySelector('#demoMeasuredS1');
+    if (measuredS1 && sample.measuredLab && measuredEl) {
+      measuredS1.textContent = measuredEl.textContent;
     }
 
-    const alignedEl = document.querySelector(`#demoAligned${cap}`);
-    if (alignedEl && item.alignedLab) {
-      alignedEl.textContent = `${item.alignedLab[0].toFixed(2)}, ${item.alignedLab[1].toFixed(2)}, ${item.alignedLab[2].toFixed(2)}`;
+    const alignedEl = document.querySelector('#demoAlignedSample') || document.querySelector('#demoAlignedS1');
+    if (alignedEl && sample.alignedLab) {
+      alignedEl.textContent = `${sample.alignedLab[0].toFixed(2)}, ${sample.alignedLab[1].toFixed(2)}, ${sample.alignedLab[2].toFixed(2)}`;
+    }
+    const alignedS1 = document.querySelector('#demoAlignedS1');
+    if (alignedS1 && sample.alignedLab && alignedEl) {
+      alignedS1.textContent = alignedEl.textContent;
     }
 
-    const deltaEl = document.querySelector(`#demoDelta${cap}`);
-    if (deltaEl && item.deltaVsRef) {
-      const d = item.deltaVsRef;
+    const deltaEl = document.querySelector('#demoDeltaSample') || document.querySelector('#demoDeltaS1');
+    if (deltaEl && sample.deltaVsRef) {
+      const d = sample.deltaVsRef;
       const fmt = (v) => (v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2));
       deltaEl.textContent = `dL: ${fmt(d.dL)}, da: ${fmt(d.da)}, db: ${fmt(d.db)}, dE: ${d.dE.toFixed(2)}`;
     }
+    const deltaS1 = document.querySelector('#demoDeltaS1');
+    if (deltaS1 && sample.deltaVsRef && deltaEl) {
+      deltaS1.textContent = deltaEl.textContent;
+    }
 
-    const matchEl = document.querySelector(`#demoMatch${cap}`);
-    if (matchEl && item.nearestMatch) {
-      const m = item.nearestMatch;
+    const matchEl = document.querySelector('#demoMatchSample') || document.querySelector('#demoMatchS1');
+    if (matchEl && sample.nearestMatch) {
+      const m = sample.nearestMatch;
       if (!m.matched) {
-        matchEl.innerHTML = `<strong style="color:var(--status-invalid-text, #b91c1c);">No match</strong> (dist: ${m.distance.toFixed(2)})`;
+        matchEl.innerHTML = `<strong class="no-match" style="color:var(--status-invalid-text, #f87171);">No match</strong> (dist: ${m.distance.toFixed(2)})`;
       } else {
         const tempText = m.cellTempC ? ` @ ${m.cellTempC}°C` : '';
         const labText = m.cellLab ? ` [${m.cellLab[0].toFixed(2)}, ${m.cellLab[1].toFixed(2)}, ${m.cellLab[2].toFixed(2)}]` : '';
-        matchEl.innerHTML = `<strong>${m.ppm} ppm</strong>${tempText} (dist: ${m.distance.toFixed(2)})<small style="color:var(--text-muted);display:block;font-size:10px;">${labText}</small>`;
+        matchEl.innerHTML = `<strong>${m.ppm} ppm</strong>${tempText} (dist: ${m.distance.toFixed(2)})<small style="color:var(--text-muted);display:block;font-size:11px;margin-top:2px;">Chart row: ${labText}</small>`;
       }
     }
-  });
+    const matchS1 = document.querySelector('#demoMatchS1');
+    if (matchS1 && sample.nearestMatch && matchEl) {
+      matchS1.innerHTML = matchEl.innerHTML;
+    }
+
+    const gatesSample = document.querySelector('#demoGatesSample');
+    const sampleGate = demoResult.gates?.sample || demoResult.gates?.s1;
+    if (gatesSample && sampleGate) {
+      gatesSample.innerHTML = `
+        <span class="gate-tag ${sampleGate.uniformityPassed ? 'pass' : 'fail'}">Uniformity: ${sampleGate.uniformityPassed ? 'Pass' : 'Fail (stddev ' + sampleGate.stddev + ')'}</span>
+        <span class="gate-tag ${sampleGate.clippingPassed ? 'pass' : 'fail'}">Clipping: ${sampleGate.clippingPassed ? 'Pass' : 'Fail (' + (sampleGate.clippedFraction * 100).toFixed(1) + '%)'}</span>
+      `;
+    }
+  }
 }
 
 function initBrowser() {
@@ -1791,7 +1830,7 @@ function initBrowser() {
     if (!demoReader) return;
     const tempSelectVal = document.querySelector('#demoTempSelect')?.value || '25';
     const tempC = tempSelectVal === 'all' ? 25 : Number(tempSelectVal);
-    const canvas = demoReader.createDemoBadgeCanvas({ tempC, ppmValues: [10, 20, 40, 50] });
+    const canvas = demoReader.createDemoBadgeCanvas({ tempC, samplePpm: 20 });
 
     const cameraFeed = document.querySelector('#cameraFeed');
     const cameraPlaceholder = document.querySelector('#cameraPlaceholder');
@@ -1813,7 +1852,7 @@ function initBrowser() {
     uploadedPreview.style.display = 'block';
 
     const cameraState = document.querySelector('#cameraState');
-    if (cameraState) cameraState.textContent = 'DEMO BADGE (REF + S1-S4)';
+    if (cameraState) cameraState.textContent = 'DEMO BADGE (REF + SAMPLE)';
 
     const capture = { frames: [canvas], backgroundRGB: [20, 20, 20] };
     analyzeBadge(capture, { forceEstimate: true });

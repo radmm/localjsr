@@ -336,7 +336,7 @@ assert.equal(typeof savedRec.fallbackUsed, 'boolean');
 assert.ok(savedRec.aiQualityScores);
 assert.ok(savedRec.crossCheck);
 
-// --- Color-First Demo Mode Unit & Integration Tests ---
+// --- Color-First Demo Mode Unit & Integration Tests (2 ROIs: Reference & Sample) ---
 const demoColorReader = require('./demo-color-reader.js');
 
 // Test 1: Record persistence includes ROI medians, Lab, aligned Lab, and estimator version
@@ -345,143 +345,134 @@ assert.ok(savedRec.demoLab);
 assert.ok(savedRec.demoAlignedLab);
 assert.equal(savedRec.demoEstimatorVersion, 'color-first-v2.0');
 assert.ok(savedRec.demoRoiMedians.ref);
-assert.ok(savedRec.demoRoiMedians.s1);
+assert.ok(savedRec.demoRoiMedians.sample || savedRec.demoRoiMedians.s1);
 
 // Test 2: Aligned Lab of the reference must equal (45.77, 34.05, -19.46)
 const refLab1 = [52.34, 28.12, -12.45];
-const alignedRef1 = demoColorReader.computeAlignedLab(refLab1, refLab1);
-assert.deepEqual(alignedRef1, [45.77, 34.05, -19.46]);
+assert.deepEqual(demoColorReader.computeAlignedLab(refLab1, refLab1), [45.77, 34.05, -19.46]);
 
 const refLab2 = [45.77, 34.05, -19.46];
-const alignedRef2 = demoColorReader.computeAlignedLab(refLab2, refLab2);
-assert.deepEqual(alignedRef2, [45.77, 34.05, -19.46]);
+assert.deepEqual(demoColorReader.computeAlignedLab(refLab2, refLab2), [45.77, 34.05, -19.46]);
 
 const arbitraryRef = [39.10, 41.50, -5.20];
-const alignedRefArbitrary = demoColorReader.computeAlignedLab(arbitraryRef, arbitraryRef);
-assert.deepEqual(alignedRefArbitrary, [45.77, 34.05, -19.46]);
+assert.deepEqual(demoColorReader.computeAlignedLab(arbitraryRef, arbitraryRef), [45.77, 34.05, -19.46]);
 
-// Test 3: A uniform tint applied to all five patches must leave aligned Lab and deltas unchanged within tolerance
+// Test 3: A uniform tint applied to both patches leaves aligned Lab and deltas unchanged within tolerance
 const basePatches = {
   ref: [45.77, 34.05, -19.46],
-  s1: [45.57, 30.22, -3.75],
-  s2: [43.93, 35.10, -0.87],
-  s3: [50.79, 33.50, 10.43],
-  s4: [51.63, 31.86, 12.39],
+  sample: [45.57, 30.22, -3.75], // 10 ppm @ 25 C
 };
 
 const tintShift = [12.5, -8.3, 15.2];
 const tintedPatches = {
   ref: [basePatches.ref[0] + tintShift[0], basePatches.ref[1] + tintShift[1], basePatches.ref[2] + tintShift[2]],
-  s1:  [basePatches.s1[0]  + tintShift[0], basePatches.s1[1]  + tintShift[1], basePatches.s1[2]  + tintShift[2]],
-  s2:  [basePatches.s2[0]  + tintShift[0], basePatches.s2[1]  + tintShift[1], basePatches.s2[2]  + tintShift[2]],
-  s3:  [basePatches.s3[0]  + tintShift[0], basePatches.s3[1]  + tintShift[1], basePatches.s3[2]  + tintShift[2]],
-  s4:  [basePatches.s4[0]  + tintShift[0], basePatches.s4[1]  + tintShift[1], basePatches.s4[2]  + tintShift[2]],
+  sample: [basePatches.sample[0] + tintShift[0], basePatches.sample[1] + tintShift[1], basePatches.sample[2] + tintShift[2]],
 };
 
 const baseReadout = demoColorReader.processDemoColorReadout(basePatches, { tempC: 25 });
 const tintedReadout = demoColorReader.processDemoColorReadout(tintedPatches, { tempC: 25 });
 
-['ref', 's1', 's2', 's3', 's4'].forEach((key) => {
-  // Aligned Lab unchanged within tolerance
-  assert.ok(
-    Math.abs(baseReadout[key].alignedLab[0] - tintedReadout[key].alignedLab[0]) < 0.05,
-    `${key} aligned L* changed under tint`
-  );
-  assert.ok(
-    Math.abs(baseReadout[key].alignedLab[1] - tintedReadout[key].alignedLab[1]) < 0.05,
-    `${key} aligned a* changed under tint`
-  );
-  assert.ok(
-    Math.abs(baseReadout[key].alignedLab[2] - tintedReadout[key].alignedLab[2]) < 0.05,
-    `${key} aligned b* changed under tint`
-  );
+// Aligned Lab unchanged within tolerance
+assert.ok(
+  Math.abs(baseReadout.ref.alignedLab[0] - tintedReadout.ref.alignedLab[0]) < 0.05,
+  'ref aligned L* changed under tint'
+);
+assert.ok(
+  Math.abs(baseReadout.sample.alignedLab[0] - tintedReadout.sample.alignedLab[0]) < 0.05,
+  'sample aligned L* changed under tint'
+);
+assert.ok(
+  Math.abs(baseReadout.sample.alignedLab[1] - tintedReadout.sample.alignedLab[1]) < 0.05,
+  'sample aligned a* changed under tint'
+);
+assert.ok(
+  Math.abs(baseReadout.sample.alignedLab[2] - tintedReadout.sample.alignedLab[2]) < 0.05,
+  'sample aligned b* changed under tint'
+);
 
-  // Deltas unchanged within tolerance
-  assert.ok(
-    Math.abs(baseReadout[key].deltaVsRef.dL - tintedReadout[key].deltaVsRef.dL) < 0.05,
-    `${key} delta dL changed under tint`
-  );
-  assert.ok(
-    Math.abs(baseReadout[key].deltaVsRef.da - tintedReadout[key].deltaVsRef.da) < 0.05,
-    `${key} delta da changed under tint`
-  );
-  assert.ok(
-    Math.abs(baseReadout[key].deltaVsRef.db - tintedReadout[key].deltaVsRef.db) < 0.05,
-    `${key} delta db changed under tint`
-  );
-  assert.ok(
-    Math.abs(baseReadout[key].deltaVsRef.dE - tintedReadout[key].deltaVsRef.dE) < 0.05,
-    `${key} delta dE changed under tint`
-  );
-});
+// Deltas unchanged within tolerance
+assert.ok(
+  Math.abs(baseReadout.sample.deltaVsRef.dL - tintedReadout.sample.deltaVsRef.dL) < 0.05,
+  'sample delta dL changed under tint'
+);
+assert.ok(
+  Math.abs(baseReadout.sample.deltaVsRef.da - tintedReadout.sample.deltaVsRef.da) < 0.05,
+  'sample delta da changed under tint'
+);
+assert.ok(
+  Math.abs(baseReadout.sample.deltaVsRef.db - tintedReadout.sample.deltaVsRef.db) < 0.05,
+  'sample delta db changed under tint'
+);
+assert.ok(
+  Math.abs(baseReadout.sample.deltaVsRef.dE - tintedReadout.sample.deltaVsRef.dE) < 0.05,
+  'sample delta dE changed under tint'
+);
 
-// Test 4: Feeding the four chart Lab values (25 C: 10, 20, 40, 50 ppm) with the chart reference must return those values back
-const chart25Inputs = {
-  ref: [45.77, 34.05, -19.46], // Chart 0 ppm reference
-  s1: [45.57, 30.22, -3.75],   // Chart 10 ppm @ 25 C
-  s2: [43.93, 35.10, -0.87],   // Chart 20 ppm @ 25 C
-  s3: [50.79, 33.50, 10.43],   // Chart 40 ppm @ 25 C
-  s4: [51.63, 31.86, 12.39],   // Chart 50 ppm @ 25 C
-};
+// Test 4: With the chart reference, feeding each of the four 25 C chart Lab values (10, 20, 40, 50 ppm) one at a time returns that ppm
+const chartRef = [45.77, 34.05, -19.46];
+const chart25Tests = [
+  { ppm: 10, lab: [45.57, 30.22, -3.75] },
+  { ppm: 20, lab: [43.93, 35.10, -0.87] },
+  { ppm: 40, lab: [50.79, 33.50, 10.43] },
+  { ppm: 50, lab: [51.63, 31.86, 12.39] },
+];
 
-const chartReadout = demoColorReader.processDemoColorReadout(chart25Inputs, { tempC: 25 });
+for (const { ppm, lab } of chart25Tests) {
+  const readout = demoColorReader.processDemoColorReadout({ ref: chartRef, sample: lab }, { tempC: 25 });
+  assert.equal(readout.sample.nearestMatch.matched, true);
+  assert.equal(readout.sample.nearestMatch.ppm, ppm);
+  assert.equal(readout.sample.nearestMatch.distance, 0);
+  assert.deepEqual(readout.sample.nearestMatch.cellLab, lab);
+  assert.deepEqual(readout.sample.alignedLab, lab);
+}
 
-// Reference return
-assert.equal(chartReadout.ref.nearestMatch.matched, true);
-assert.equal(chartReadout.ref.nearestMatch.ppm, 0);
-assert.equal(chartReadout.ref.nearestMatch.distance, 0);
-assert.deepEqual(chartReadout.ref.alignedLab, [45.77, 34.05, -19.46]);
+// Test 5: Quality gates - each gate has a passing and a failing fixture
+// A. Uniformity Gate:
+// Passing fixture: uniform patch (noiseStddev = 0)
+const passUniformCanvas = demoColorReader.createDemoBadgeCanvas({ noiseStddev: 0, clippedPixels: 0 });
+const passUniformCheck = demoColorReader.checkDemoQualityGates(passUniformCanvas);
+assert.equal(passUniformCheck.gates.sample.uniformityPassed, true, 'Uniform patch should pass uniformity gate');
+assert.ok(passUniformCheck.gates.sample.stddev <= 24);
 
-// 10 ppm return
-assert.equal(chartReadout.s1.nearestMatch.matched, true);
-assert.equal(chartReadout.s1.nearestMatch.ppm, 10);
-assert.equal(chartReadout.s1.nearestMatch.distance, 0);
-assert.deepEqual(chartReadout.s1.nearestMatch.cellLab, [45.57, 30.22, -3.75]);
-assert.deepEqual(chartReadout.s1.alignedLab, [45.57, 30.22, -3.75]);
+// Failing fixture: non-uniform noisy patch (noiseStddev = 30)
+const failUniformCanvas = demoColorReader.createDemoBadgeCanvas({ noiseStddev: 30, clippedPixels: 0 });
+const failUniformCheck = demoColorReader.checkDemoQualityGates(failUniformCanvas);
+assert.equal(failUniformCheck.gates.sample.uniformityPassed, false, 'Noisy patch should fail uniformity gate');
+assert.ok(failUniformCheck.gates.sample.stddev > 24);
+assert.equal(failUniformCheck.gates.sample.failureReason, 'Patch not uniform, retake');
 
-// 20 ppm return
-assert.equal(chartReadout.s2.nearestMatch.matched, true);
-assert.equal(chartReadout.s2.nearestMatch.ppm, 20);
-assert.equal(chartReadout.s2.nearestMatch.distance, 0);
-assert.deepEqual(chartReadout.s2.nearestMatch.cellLab, [43.93, 35.10, -0.87]);
-assert.deepEqual(chartReadout.s2.alignedLab, [43.93, 35.10, -0.87]);
+// B. Clipping Gate:
+// Passing fixture: normal brightness patch (clippedPixels = 0)
+const passClipCanvas = demoColorReader.createDemoBadgeCanvas({ noiseStddev: 0, clippedPixels: 0 });
+const passClipCheck = demoColorReader.checkDemoQualityGates(passClipCanvas);
+assert.equal(passClipCheck.gates.sample.clippingPassed, true, 'Normal patch should pass clipping gate');
+assert.ok(passClipCheck.gates.sample.clippedFraction <= 0.02);
 
-// 40 ppm return
-assert.equal(chartReadout.s3.nearestMatch.matched, true);
-assert.equal(chartReadout.s3.nearestMatch.ppm, 40);
-assert.equal(chartReadout.s3.nearestMatch.distance, 0);
-assert.deepEqual(chartReadout.s3.nearestMatch.cellLab, [50.79, 33.50, 10.43]);
-assert.deepEqual(chartReadout.s3.alignedLab, [50.79, 33.50, 10.43]);
-
-// 50 ppm return
-assert.equal(chartReadout.s4.nearestMatch.matched, true);
-assert.equal(chartReadout.s4.nearestMatch.ppm, 50);
-assert.equal(chartReadout.s4.nearestMatch.distance, 0);
-assert.deepEqual(chartReadout.s4.nearestMatch.cellLab, [51.63, 31.86, 12.39]);
-assert.deepEqual(chartReadout.s4.alignedLab, [51.63, 31.86, 12.39]);
-
-// Test 5: Synthetic demo badge canvas generation & sampling
-const testCanvas = demoColorReader.createDemoBadgeCanvas({ tempC: 25, ppmValues: [10, 20, 40, 50] });
-const sampledDemo = demoColorReader.sampleDemoCanvas(testCanvas);
-assert.ok(sampledDemo.roiMedians.ref);
-assert.ok(sampledDemo.measuredLab.ref);
-assert.ok(sampledDemo.roiMedians.s1);
-assert.ok(sampledDemo.measuredLab.s1);
+// Failing fixture: overexposed/clipped patch (saturated = true)
+const failClipCanvas = demoColorReader.createDemoBadgeCanvas({ noiseStddev: 0, saturated: true });
+const failClipCheck = demoColorReader.checkDemoQualityGates(failClipCanvas);
+assert.equal(failClipCheck.gates.sample.clippingPassed, false, 'Clipped patch should fail clipping gate');
+assert.ok(failClipCheck.gates.sample.clippedFraction > 0.02);
+assert.equal(failClipCheck.gates.sample.failureReason, 'Too bright or dark');
 
 // Test 6: Demo stability buffer tests
+const sampledDemo = demoColorReader.sampleDemoCanvas(passUniformCanvas);
+assert.ok(sampledDemo.roiMedians.ref);
+assert.ok(sampledDemo.measuredLab.ref);
+assert.ok(sampledDemo.roiMedians.sample);
+assert.ok(sampledDemo.measuredLab.sample);
+
 const buffer = new demoColorReader.DemoStabilityBuffer(5, 3.5);
 assert.equal(buffer.addFrame(sampledDemo).isStable, true); // single frame is stable
 buffer.reset();
+
 // 4 unsteady frames
 for (let i = 0; i < 4; i++) {
   const perturbed = {
     roiMedians: sampledDemo.roiMedians,
     measuredLab: {
       ref: [sampledDemo.measuredLab.ref[0] + i * 2, sampledDemo.measuredLab.ref[1], sampledDemo.measuredLab.ref[2]],
-      s1: [sampledDemo.measuredLab.s1[0], sampledDemo.measuredLab.s1[1], sampledDemo.measuredLab.s1[2]],
-      s2: [sampledDemo.measuredLab.s2[0], sampledDemo.measuredLab.s2[1], sampledDemo.measuredLab.s2[2]],
-      s3: [sampledDemo.measuredLab.s3[0], sampledDemo.measuredLab.s3[1], sampledDemo.measuredLab.s3[2]],
-      s4: [sampledDemo.measuredLab.s4[0], sampledDemo.measuredLab.s4[1], sampledDemo.measuredLab.s4[2]],
+      sample: [sampledDemo.measuredLab.sample[0], sampledDemo.measuredLab.sample[1], sampledDemo.measuredLab.sample[2]],
     },
   };
   const st = buffer.addFrame(perturbed);

@@ -93,14 +93,14 @@
         </aside>
       </section>
 
-      <!-- COLOR-FIRST DEMO READOUT PANEL -->
+      <!-- COLOR-FIRST DEMO READOUT PANEL (TWO ROIS ONLY: 0 PPM REF & SAMPLE) -->
       <section class="demo-color-panel" id="demoModeSection" style="display:none;margin-top:20px;">
         <div class="demo-card-container">
           <div class="demo-header-row">
             <div>
               <span class="pill high" style="font-size:10px;font-weight:700;letter-spacing:0.04em;">DEMO MODE: COLOR-FIRST READOUT</span>
               <h2 style="font-size:18px;margin:4px 0 2px;">Colorimetry & Chart Alignment</h2>
-              <p class="lede" style="font-size:12px;margin:0;">Live sampling of 0 ppm reference and S1 - S4 with delta vs ref and nearest chart match.</p>
+              <p class="lede" style="font-size:12px;margin:0;">Two-ROI differential colorimeter: 0 ppm reference patch &amp; sample patch with chart alignment.</p>
             </div>
             <div class="demo-controls-bar">
               <label class="demo-temp-label">
@@ -118,16 +118,17 @@
                 <span class="stability-dot"></span>
                 <span id="demoStabilityText">Stable (spread: ±0.0)</span>
               </div>
-              <button class="secondary-button" id="demoTestBadgeButton" type="button" style="height:32px;font-size:11px;padding:0 10px;">Load 4-Point Demo Badge</button>
+              <button class="secondary-button" id="demoTestBadgeButton" type="button" style="height:32px;font-size:11px;padding:0 10px;">Load 2-Patch Demo Badge</button>
             </div>
           </div>
 
-          <div class="demo-readout-grid" id="demoReadoutGrid">
-            <!-- Reference Card -->
+          <!-- Single Readout Grid: 2 Patches (Reference + Sample) -->
+          <div class="demo-readout-grid demo-two-rois" id="demoReadoutGrid">
+            <!-- Reference Patch Card -->
             <div class="demo-patch-card" id="demoCardRef">
               <div class="demo-patch-header">
                 <div class="patch-info">
-                  <span class="patch-badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;">REF</span>
+                  <span class="patch-badge" style="background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);">REF</span>
                   <strong>Reference (0 ppm)</strong>
                 </div>
                 <div class="demo-swatch-wrapper">
@@ -137,7 +138,7 @@
               <div class="demo-metric-row">
                 <div class="metric-col">
                   <small>Measured L*a*b*</small>
-                  <span class="metric-val" id="demoMeasuredRef">--</span>
+                  <span class="metric-val" id="demoMeasuredRef">L*: 45.77, a*: 34.05, b*: -19.46</span>
                 </div>
                 <div class="metric-col">
                   <small>aligned to chart</small>
@@ -146,135 +147,60 @@
               </div>
               <div class="demo-delta-row">
                 <span class="delta-label">Delta vs Ref:</span>
-                <span class="delta-val">Baseline (dL: 0, da: 0, db: 0, dE: 0)</span>
+                <span class="delta-val">Baseline (dL: 0.00, da: 0.00, db: 0.00, dE: 0.00)</span>
               </div>
               <div class="demo-match-row">
                 <span class="match-tag">closest chart match, demo only</span>
                 <div id="demoMatchRef" class="match-detail"><strong>0 ppm</strong> (dist: 0.00)</div>
               </div>
+              <div class="demo-gate-status" id="demoGatesRef" style="display:flex;gap:6px;margin-top:8px;font-size:11px;">
+                <span class="gate-tag pass">Uniformity: Pass</span>
+                <span class="gate-tag pass">Clipping: Pass</span>
+              </div>
             </div>
 
-            <!-- S1 Card -->
-            <div class="demo-patch-card" id="demoCardS1">
+            <!-- Single Sample Card -->
+            <div class="demo-patch-card highlight-card" id="demoCardSample">
               <div class="demo-patch-header">
                 <div class="patch-info">
-                  <span class="patch-badge" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;">S1</span>
-                  <strong>Sample 1</strong>
+                  <span class="patch-badge" style="background:rgba(74,222,128,0.15);color:#4ade80;border:1px solid rgba(74,222,128,0.3);">SMP</span>
+                  <strong>Sample Patch</strong>
                 </div>
                 <div class="demo-swatch-wrapper">
-                  <div class="demo-swatch-box" id="demoSwatchS1" style="background-color:rgb(210,190,170);"></div>
+                  <div class="demo-swatch-box" id="demoSwatchSample" style="background-color:rgb(200,120,80);"></div>
+                  <!-- Backwards compatibility element -->
+                  <div id="demoSwatchS1" style="display:none;"></div>
                 </div>
               </div>
               <div class="demo-metric-row">
                 <div class="metric-col">
                   <small>Measured L*a*b*</small>
-                  <span class="metric-val" id="demoMeasuredS1">--</span>
+                  <span class="metric-val" id="demoMeasuredSample">--</span>
+                  <!-- Backwards compatibility element -->
+                  <span id="demoMeasuredS1" style="display:none;">--</span>
                 </div>
                 <div class="metric-col">
                   <small>aligned to chart</small>
-                  <span class="metric-val highlight" id="demoAlignedS1">--</span>
+                  <span class="metric-val highlight" id="demoAlignedSample">--</span>
+                  <!-- Backwards compatibility element -->
+                  <span id="demoAlignedS1" style="display:none;">--</span>
                 </div>
               </div>
               <div class="demo-delta-row">
                 <span class="delta-label">Delta vs Ref:</span>
-                <span class="delta-val" id="demoDeltaS1">dL: --, da: --, db: --, dE: --</span>
+                <span class="delta-val" id="demoDeltaSample">dL: --, da: --, db: --, dE: --</span>
+                <!-- Backwards compatibility element -->
+                <span id="demoDeltaS1" style="display:none;">--</span>
               </div>
               <div class="demo-match-row">
                 <span class="match-tag">closest chart match, demo only</span>
-                <div id="demoMatchS1" class="match-detail">--</div>
+                <div id="demoMatchSample" class="match-detail">--</div>
+                <!-- Backwards compatibility element -->
+                <div id="demoMatchS1" style="display:none;">--</div>
               </div>
-            </div>
-
-            <!-- S2 Card -->
-            <div class="demo-patch-card" id="demoCardS2">
-              <div class="demo-patch-header">
-                <div class="patch-info">
-                  <span class="patch-badge" style="background:#fef9c3;color:#854d0e;border:1px solid #fef08a;">S2</span>
-                  <strong>Sample 2</strong>
-                </div>
-                <div class="demo-swatch-wrapper">
-                  <div class="demo-swatch-box" id="demoSwatchS2" style="background-color:rgb(200,160,130);"></div>
-                </div>
-              </div>
-              <div class="demo-metric-row">
-                <div class="metric-col">
-                  <small>Measured L*a*b*</small>
-                  <span class="metric-val" id="demoMeasuredS2">--</span>
-                </div>
-                <div class="metric-col">
-                  <small>aligned to chart</small>
-                  <span class="metric-val highlight" id="demoAlignedS2">--</span>
-                </div>
-              </div>
-              <div class="demo-delta-row">
-                <span class="delta-label">Delta vs Ref:</span>
-                <span class="delta-val" id="demoDeltaS2">dL: --, da: --, db: --, dE: --</span>
-              </div>
-              <div class="demo-match-row">
-                <span class="match-tag">closest chart match, demo only</span>
-                <div id="demoMatchS2" class="match-detail">--</div>
-              </div>
-            </div>
-
-            <!-- S3 Card -->
-            <div class="demo-patch-card" id="demoCardS3">
-              <div class="demo-patch-header">
-                <div class="patch-info">
-                  <span class="patch-badge" style="background:#ffedd5;color:#9a3412;border:1px solid #fed7aa;">S3</span>
-                  <strong>Sample 3</strong>
-                </div>
-                <div class="demo-swatch-wrapper">
-                  <div class="demo-swatch-box" id="demoSwatchS3" style="background-color:rgb(180,120,80);"></div>
-                </div>
-              </div>
-              <div class="demo-metric-row">
-                <div class="metric-col">
-                  <small>Measured L*a*b*</small>
-                  <span class="metric-val" id="demoMeasuredS3">--</span>
-                </div>
-                <div class="metric-col">
-                  <small>aligned to chart</small>
-                  <span class="metric-val highlight" id="demoAlignedS3">--</span>
-                </div>
-              </div>
-              <div class="demo-delta-row">
-                <span class="delta-label">Delta vs Ref:</span>
-                <span class="delta-val" id="demoDeltaS3">dL: --, da: --, db: --, dE: --</span>
-              </div>
-              <div class="demo-match-row">
-                <span class="match-tag">closest chart match, demo only</span>
-                <div id="demoMatchS3" class="match-detail">--</div>
-              </div>
-            </div>
-
-            <!-- S4 Card -->
-            <div class="demo-patch-card" id="demoCardS4">
-              <div class="demo-patch-header">
-                <div class="patch-info">
-                  <span class="patch-badge" style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;">S4</span>
-                  <strong>Sample 4</strong>
-                </div>
-                <div class="demo-swatch-wrapper">
-                  <div class="demo-swatch-box" id="demoSwatchS4" style="background-color:rgb(170,90,50);"></div>
-                </div>
-              </div>
-              <div class="demo-metric-row">
-                <div class="metric-col">
-                  <small>Measured L*a*b*</small>
-                  <span class="metric-val" id="demoMeasuredS4">--</span>
-                </div>
-                <div class="metric-col">
-                  <small>aligned to chart</small>
-                  <span class="metric-val highlight" id="demoAlignedS4">--</span>
-                </div>
-              </div>
-              <div class="demo-delta-row">
-                <span class="delta-label">Delta vs Ref:</span>
-                <span class="delta-val" id="demoDeltaS4">dL: --, da: --, db: --, dE: --</span>
-              </div>
-              <div class="demo-match-row">
-                <span class="match-tag">closest chart match, demo only</span>
-                <div id="demoMatchS4" class="match-detail">--</div>
+              <div class="demo-gate-status" id="demoGatesSample" style="display:flex;gap:6px;margin-top:8px;font-size:11px;">
+                <span class="gate-tag pass">Uniformity: Pass</span>
+                <span class="gate-tag pass">Clipping: Pass</span>
               </div>
             </div>
           </div>
@@ -351,10 +277,19 @@
       </div>
     </section>
   </div>
-  <script src="demo-color-reader.js?v=2.2"></script>
-  <script src="ai-detector.js?v=2.2" defer></script>
-  <script src="app.js?v=2.2"></script>
+  <script src="demo-color-reader.js?v=2.3"></script>
+  <script src="ai-detector.js?v=2.3" defer></script>
+  <script src="app.js?v=2.3"></script>
   <script>
+    if ('caches' in window) {
+      caches.keys().then((names) => {
+        names.forEach((name) => {
+          if (name !== 'h2s-badge-reader-v5') {
+            caches.delete(name);
+          }
+        });
+      });
+    }
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
