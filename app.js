@@ -14,10 +14,10 @@ const ANALYSIS_VERSION = 'v2.0-unified';
 // ONE CONFIG OBJECT
 const BADGE_CONFIG = {
   aspectRatio: 0.64, // width : height (unrotated guide rectangle)
-  sampleCenterFraction: 0.40, // sample center 40% of each patch
+  sampleCenterFraction: 0.30, // sample center 30% of each patch (avoids edge bleed)
   r3TargetHex: '#C4C3BF',
   r3TargetRgb: [196, 195, 191],
-  gainLimits: [0.6, 1.6],
+  gainLimits: [0.45, 2.2],
   patchBoxSize: { w: 0.22, h: 0.16 }, // fraction of guide rectangle
   patches: {
     R1: { id: 'R1', col: 'REF', row: 1, name: 'pink', x: 0.22, y: 0.12, defaultHex: '#CD8290' },
@@ -35,14 +35,14 @@ const BADGE_CONFIG = {
   },
   weights: { L: 0.5, a: 1.0, b: 1.5 },
   thresholds: {
-    maxLuminanceStd: 12.0,
-    maxClippedFraction: 0.02,
-    maxFrameSpread: 6.0,
-    s1MinLabB: 50.0,
-    s1MinLabL: 70.0,
-    noMatchDist: 12.0,
-    lowConfidenceDist: 8.0,
-    lowConfidenceDiff: 4.0,
+    maxLuminanceStd: 24.0,
+    maxClippedFraction: 0.12,
+    maxFrameSpread: 16.0,
+    s1MinLabB: 25.0,
+    s1MinLabL: 40.0,
+    noMatchDist: 26.0,
+    lowConfidenceDist: 16.0,
+    lowConfidenceDiff: 2.0,
   },
 };
 
@@ -331,7 +331,8 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
         const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
         luminances.push(lum);
 
-        if (r <= 0 || r >= 255 || g <= 0 || g >= 255 || b <= 0 || b >= 255) {
+        // True clipping: severe channel saturation or pitch black crushing
+        if ((r >= 255 || g >= 255 || b >= 255) || (r <= 0 && g <= 0 && b <= 0)) {
           clippedPixels++;
         }
       }
@@ -354,7 +355,7 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
     patchSamplesPerFrame.push(frameResult);
   }
 
-  // 1. Uniformity gate (luminance std <= 12)
+  // 1. Uniformity gate (luminance std)
   for (const frameResult of patchSamplesPerFrame) {
     for (const key of patchKeys) {
       if (frameResult[key].lumStd > BADGE_CONFIG.thresholds.maxLuminanceStd) {
@@ -363,11 +364,11 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
     }
   }
 
-  // 2. Clipping gate (over 2% pixels at 0 or 255)
+  // 2. Clipping gate (over allowed fraction of pixels saturated/crushed)
   for (const frameResult of patchSamplesPerFrame) {
     for (const key of patchKeys) {
       if (frameResult[key].clippedFraction > BADGE_CONFIG.thresholds.maxClippedFraction) {
-        return { valid: false, refusalReason: 'Clipping, retake: over 2% pixels at 0 or 255' };
+        return { valid: false, refusalReason: 'Clipping, retake: excessive glare or saturation' };
       }
     }
   }
@@ -410,7 +411,7 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
   const maxGain = BADGE_CONFIG.gainLimits[1];
 
   if (gainR < minGain || gainR > maxGain || gainG < minGain || gainG > maxGain || gainB < minGain || gainB > maxGain) {
-    return { valid: false, refusalReason: 'Lighting out of range (gain outside 0.6-1.6), retake' };
+    return { valid: false, refusalReason: 'Lighting out of range, retake' };
   }
 
   // Apply gains to all patches
@@ -1022,7 +1023,7 @@ function initBrowser() {
     }
   }
 
-  async function captureFrames(count = 15) {
+  async function captureFrames(count = 5) {
     const video = document.querySelector('#cameraFeed');
     const uploadedPreview = document.querySelector('#uploadedPreview');
 
@@ -1052,7 +1053,7 @@ function initBrowser() {
       ctx.drawImage(video, 0, 0, vw, vh);
       frames.push(canvas);
       if (count > 1) {
-        await new Promise((r) => setTimeout(r, 40));
+        await new Promise((r) => setTimeout(r, 30));
       }
     }
     return frames;
@@ -1064,7 +1065,7 @@ function initBrowser() {
     if (btn) btn.disabled = true;
 
     try {
-      const frames = await captureFrames(15);
+      const frames = await captureFrames(5);
       if (!frames) {
         showRefusal('Camera feed not ready. Try uploading an image.');
         return;
@@ -1196,7 +1197,7 @@ function initBrowser() {
 
     let frames = lastCapturedFrames;
     if (!frames) {
-      frames = await captureFrames(15);
+      frames = await captureFrames(5);
     }
 
     if (!frames) {
