@@ -711,6 +711,29 @@ function updateComparisonSummary() {
   output.textContent = `Incremental exposure since last reading: ${result.doseDifference.toFixed(1)} ppm·min over ${timeMinutes}.`;
 }
 
+function deleteAllRecords() {
+  if (typeof localStorage !== 'undefined') {
+    if (typeof localStorage.removeItem === 'function') {
+      localStorage.removeItem(STORAGE_KEY);
+    } else {
+      localStorage.setItem(STORAGE_KEY, '[]');
+    }
+  }
+  if (typeof document !== 'undefined') {
+    renderRecords();
+  }
+}
+
+function deleteRecord(timestamp) {
+  if (typeof localStorage !== 'undefined') {
+    const stored = records().filter((record) => record.timestamp !== timestamp);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+  }
+  if (typeof document !== 'undefined') {
+    renderRecords();
+  }
+}
+
 function renderRecords() {
   const stored = records();
   const count = document.querySelector('#recordCount');
@@ -721,7 +744,7 @@ function renderRecords() {
   renderComparisonControls(stored);
 
   if (!stored.length) {
-    body.innerHTML = '<tr class="empty-row"><td colspan="6">No readings yet. Captured records remain available in airplane mode.</td></tr>';
+    body.innerHTML = '<tr class="empty-row"><td colspan="7">No readings yet. Captured records remain available in airplane mode.</td></tr>';
     updateComparisonSummary();
     return;
   }
@@ -730,11 +753,16 @@ function renderRecords() {
     const versionFlag = record.analysisVersion === ANALYSIS_VERSION ? '' : `<small class="record-version">Legacy ${record.analysisVersion || 'record'}</small>`;
     return `<tr>
     <td class="worker-cell"><strong>${record.workerId}</strong><small>${record.badgeId}</small></td>
-    <td>${record.shiftId}</td>
+    <td class="col-shift">${record.shiftId}</td>
     <td><strong>${record.concentrationBandEstimate || '0 ppm-equivalent'}</strong>${versionFlag}</td>
     <td><strong>${Number(record.dose || 0).toFixed(1)}</strong> ppm·min</td>
-    <td><span class="pill ${record.confidenceLevel ? record.confidenceLevel.toLowerCase() : 'medium'}">${record.confidenceLevel || 'Medium'}</span></td>
-    <td><span class="pill subtle">${record.tempHumidityDriftFlag || 'Low drift'}</span></td>
+    <td class="col-confidence"><span class="pill ${record.confidenceLevel ? record.confidenceLevel.toLowerCase() : 'medium'}">${record.confidenceLevel || 'Medium'}</span></td>
+    <td class="col-drift"><span class="pill subtle">${record.tempHumidityDriftFlag || 'Low drift'}</span></td>
+    <td class="col-actions">
+      <button class="row-delete-btn danger-text" type="button" data-timestamp="${record.timestamp}" aria-label="Delete reading" title="Delete reading">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+      </button>
+    </td>
   </tr>`;
   }).join('');
 
@@ -934,63 +962,6 @@ function showDebugCapture(frame, roiMedians, aiDetection = null) {
 }
 
 let lastCaptureForRetry = null;
-
-function createCalibratedBadgeCanvas(ppm = 20) {
-  const width = 640;
-  const height = 480;
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-
-  const imgData = ctx.createImageData(width, height);
-  const data = imgData.data;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const idx = (y * width + x) * 4;
-      const alternate = (x + y) % 2 === 0;
-      const shade = alternate ? 35 : 145;
-      data[idx] = shade;
-      data[idx + 1] = shade - 5;
-      data[idx + 2] = shade - 10;
-      data[idx + 3] = 255;
-    }
-  }
-
-  function paintRoiPixels(roi, color) {
-    const left = Math.floor(roi.x * width);
-    const right = Math.ceil((roi.x + roi.w) * width);
-    const top = Math.floor(roi.y * height);
-    const bottom = Math.ceil((roi.y + roi.h) * height);
-    for (let y = top; y < bottom; y += 1) {
-      for (let x = left; x < right; x += 1) {
-        const idx = (y * width + x) * 4;
-        data[idx] = color[0];
-        data[idx + 1] = color[1];
-        data[idx + 2] = color[2];
-        data[idx + 3] = 255;
-      }
-    }
-  }
-
-  ROI_LAYOUT.referenceSwatches.forEach((swatch) => paintRoiPixels(swatch, swatch.color));
-  paintRoiPixels(ROI_LAYOUT.sealedReference, [220, 220, 210]);
-
-  const stripRgbByPpm = {
-    0: [210, 215, 210],
-    1: [210, 190, 170],
-    2: [215, 175, 150],
-    5: [210, 155, 125],
-    10: [210, 140, 100],
-    20: [200, 120, 80],
-    50: [180, 90, 40],
-    100: [170, 70, 10],
-  };
-  paintRoiPixels(ROI_LAYOUT.strip, stripRgbByPpm[ppm] || stripRgbByPpm[20]);
-
-  ctx.putImageData(imgData, 0, 0);
-  return canvas;
-}
 
 function computeBestEffortReading(capture, reading) {
   const rois = reading.roiMedians || {};
@@ -1685,52 +1656,52 @@ function initBrowser() {
     }
   });
 
-  function loadAndAnalyzeSampleBadge(ppm = 20) {
-    const badgeCanvas = createCalibratedBadgeCanvas(ppm);
-    const capture = {
-      frames: [badgeCanvas],
-      backgroundRGB: [20, 20, 20],
-    };
-    const cameraFeed = document.querySelector('#cameraFeed');
-    const cameraPlaceholder = document.querySelector('#cameraPlaceholder');
-    if (cameraFeed) cameraFeed.style.display = 'none';
-    if (cameraPlaceholder) cameraPlaceholder.style.display = 'none';
-
-    let uploadedPreview = document.querySelector('#uploadedPreview');
-    if (!uploadedPreview) {
-      uploadedPreview = document.createElement('img');
-      uploadedPreview.id = 'uploadedPreview';
-      uploadedPreview.style.width = '100%';
-      uploadedPreview.style.height = '100%';
-      uploadedPreview.style.objectFit = 'contain';
-      uploadedPreview.style.position = 'absolute';
-      uploadedPreview.style.inset = '0';
-      document.querySelector('#cameraFrame').appendChild(uploadedPreview);
-    }
-    uploadedPreview.src = badgeCanvas.toDataURL('image/jpeg');
-    uploadedPreview.style.display = 'block';
-
-    const cameraState = document.querySelector('#cameraState');
-    if (cameraState) cameraState.textContent = `CALIBRATED BADGE (${ppm} PPM)`;
-    analyzeBadge(capture, { forceEstimate: false });
-  }
-
-  document.querySelector('#sampleBadgeButton')?.addEventListener('click', () => {
-    const select = document.querySelector('#samplePpmSelect');
-    const ppm = select ? Number(select.value) : 20;
-    loadAndAnalyzeSampleBadge(ppm);
-  });
-
-  document.querySelector('#loadSampleBadgeFromRetake')?.addEventListener('click', () => {
-    const select = document.querySelector('#samplePpmSelect');
-    const ppm = select ? Number(select.value) : 20;
-    loadAndAnalyzeSampleBadge(ppm);
-  });
-
   document.querySelector('#forceEstimateButton')?.addEventListener('click', () => {
     if (lastCaptureForRetry) {
       analyzeBadge(lastCaptureForRetry, { forceEstimate: true });
     }
+  });
+
+  // Confirmation dialog state and handlers
+  let pendingDeleteCallback = null;
+
+  function openConfirmDialog(message, onConfirm) {
+    const modal = document.querySelector('#confirmModal');
+    const msgEl = document.querySelector('#confirmMessage');
+    if (msgEl) msgEl.textContent = message;
+    pendingDeleteCallback = onConfirm;
+    if (modal) modal.hidden = false;
+  }
+
+  function closeConfirmDialog() {
+    const modal = document.querySelector('#confirmModal');
+    if (modal) modal.hidden = true;
+    pendingDeleteCallback = null;
+  }
+
+  document.querySelector('#confirmCancelBtn')?.addEventListener('click', closeConfirmDialog);
+
+  document.querySelector('#confirmDeleteBtn')?.addEventListener('click', () => {
+    if (typeof pendingDeleteCallback === 'function') {
+      pendingDeleteCallback();
+    }
+    closeConfirmDialog();
+  });
+
+  document.querySelector('#deleteAllRecordsBtn')?.addEventListener('click', () => {
+    openConfirmDialog("Delete all saved readings? This can't be undone.", () => {
+      deleteAllRecords();
+    });
+  });
+
+  document.querySelector('#recordsBody')?.addEventListener('click', (event) => {
+    const btn = event.target.closest('.row-delete-btn');
+    if (!btn) return;
+    const timestamp = btn.dataset.timestamp;
+    if (!timestamp) return;
+    openConfirmDialog("Delete all saved readings? This can't be undone.", () => {
+      deleteRecord(timestamp);
+    });
   });
 
   window.addEventListener('resize', updateCropSelection);
@@ -1895,13 +1866,17 @@ if (typeof module !== 'undefined') {
     estimateTemperatureHumidityFromDrift,
     rgbToLab,
     distance,
-    createCalibratedBadgeCanvas,
     computeBestEffortReading,
     getAiDetector,
     getDemoColorReader,
     analyzeBadge,
     drawDebugOverlay,
     updateDemoColorReadoutUI,
+    deleteAllRecords,
+    deleteRecord,
+    renderRecords,
+    records,
+    STORAGE_KEY,
   };
 }
 

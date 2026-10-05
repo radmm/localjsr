@@ -303,6 +303,7 @@ let savedRecords = [];
 const mockStorage = {
   getItem: () => JSON.stringify(savedRecords),
   setItem: (key, val) => { savedRecords = JSON.parse(val); },
+  removeItem: (key) => { savedRecords = []; },
 };
 global.localStorage = mockStorage;
 global.document = {
@@ -480,6 +481,108 @@ for (let i = 0; i < 4; i++) {
     assert.equal(st.isStable, false); // < 5 frames
   }
 }
+
+// --- Delete Records Tests: Delete One Row and Delete All Records ---
+const initialTestRecords = [
+  {
+    workerId: 'WRK-001',
+    badgeId: 'BADGE-A',
+    shiftId: 'SHIFT-1',
+    timestamp: '2026-10-04T10:00:00.000Z',
+    dose: 15.0,
+    concentrationBandEstimate: '10 ppm-equivalent',
+    confidenceLevel: 'High',
+    tempHumidityDriftFlag: 'Low drift',
+    analysisVersion: app.ANALYSIS_VERSION,
+  },
+  {
+    workerId: 'WRK-002',
+    badgeId: 'BADGE-B',
+    shiftId: 'SHIFT-2',
+    timestamp: '2026-10-04T11:00:00.000Z',
+    dose: 30.0,
+    concentrationBandEstimate: '20 ppm-equivalent',
+    confidenceLevel: 'Medium',
+    tempHumidityDriftFlag: 'Low drift',
+    analysisVersion: app.ANALYSIS_VERSION,
+  },
+  {
+    workerId: 'WRK-003',
+    badgeId: 'BADGE-C',
+    shiftId: 'SHIFT-3',
+    timestamp: '2026-10-04T12:00:00.000Z',
+    dose: 45.0,
+    concentrationBandEstimate: '50 ppm-equivalent',
+    confidenceLevel: 'High',
+    tempHumidityDriftFlag: 'Moderate drift',
+    analysisVersion: app.ANALYSIS_VERSION,
+  },
+];
+
+savedRecords = [...initialTestRecords];
+
+const mockElements = {
+  '#recordCount': { textContent: '' },
+  '#recordsBody': { innerHTML: '' },
+  '#compareLeftSelect': { innerHTML: '', value: '' },
+  '#compareRightSelect': { innerHTML: '', value: '' },
+  '#compareSummary': { textContent: '' },
+};
+
+global.document.querySelector = (selector) => {
+  if (mockElements[selector]) return mockElements[selector];
+  return {
+    value: 'WRK-TEST',
+    textContent: '',
+    hidden: false,
+    style: {},
+    className: '',
+    querySelectorAll: () => [],
+    scrollIntoView: () => {},
+  };
+};
+
+// Initial render
+app.renderRecords();
+assert.equal(app.records().length, 3, 'Initial record count must be 3');
+assert.equal(mockElements['#recordCount'].textContent, '3 saved');
+assert.ok(mockElements['#recordsBody'].innerHTML.includes('2026-10-04T10:00:00.000Z'));
+assert.ok(mockElements['#recordsBody'].innerHTML.includes('2026-10-04T11:00:00.000Z'));
+assert.ok(mockElements['#recordsBody'].innerHTML.includes('2026-10-04T12:00:00.000Z'));
+assert.ok(mockElements['#recordsBody'].innerHTML.includes('row-delete-btn'));
+
+// Test A: Deleting one row removes ONLY that record from storage and UI
+app.deleteRecord('2026-10-04T11:00:00.000Z');
+
+// Verify storage after deleting one row
+assert.equal(app.records().length, 2, 'Storage must contain 2 records after deleting 1 row');
+const remainingTimestamps = app.records().map((r) => r.timestamp);
+assert.ok(!remainingTimestamps.includes('2026-10-04T11:00:00.000Z'), 'Deleted record must not be in storage');
+assert.ok(remainingTimestamps.includes('2026-10-04T10:00:00.000Z'), 'First record must remain in storage');
+assert.ok(remainingTimestamps.includes('2026-10-04T12:00:00.000Z'), 'Third record must remain in storage');
+
+// Verify UI after deleting one row
+assert.equal(mockElements['#recordCount'].textContent, '2 saved', 'UI record count must show 2 saved');
+assert.ok(!mockElements['#recordsBody'].innerHTML.includes('2026-10-04T11:00:00.000Z'), 'Deleted row must not be in table UI');
+assert.ok(mockElements['#recordsBody'].innerHTML.includes('2026-10-04T10:00:00.000Z'), 'First record must still be in table UI');
+assert.ok(mockElements['#recordsBody'].innerHTML.includes('2026-10-04T12:00:00.000Z'), 'Third record must still be in table UI');
+assert.ok(!mockElements['#compareLeftSelect'].innerHTML.includes('2026-10-04T11:00:00.000Z'), 'Compare dropdown must not contain deleted record');
+assert.ok(mockElements['#compareLeftSelect'].innerHTML.includes('2026-10-04T10:00:00.000Z'), 'Compare dropdown must retain other records');
+
+// Test B: Deleting all records empties storage and the UI
+app.deleteAllRecords();
+
+// Verify storage is empty
+assert.equal(app.records().length, 0, 'Storage must have 0 records after deleteAllRecords');
+assert.equal(savedRecords.length, 0, 'Underlying storage array must be empty');
+
+// Verify UI shows empty state
+assert.equal(mockElements['#recordCount'].textContent, '0 saved', 'UI record count must show 0 saved');
+assert.ok(mockElements['#recordsBody'].innerHTML.includes('empty-row'), 'Table UI must contain empty-row state');
+assert.ok(mockElements['#recordsBody'].innerHTML.includes('No readings yet'), 'Table UI must show empty readings message');
+assert.ok(mockElements['#compareLeftSelect'].innerHTML.includes('No saved records'), 'Compare left dropdown must show no saved records');
+assert.ok(mockElements['#compareRightSelect'].innerHTML.includes('No saved records'), 'Compare right dropdown must show no saved records');
+assert.ok(mockElements['#compareSummary'].textContent.includes('Select two saved readings'), 'Compare summary must reset to initial state');
 
 waitForVideoReady(startingVideo).then((video) => {
   assert.equal(video, startingVideo);

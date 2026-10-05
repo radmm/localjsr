@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f5f7f6">
+  <meta name="theme-color" content="#f9fafb">
   <meta name="description" content="Industrial H2S dosimeter badge reader with on-device colorimetry, drift compensation, and offline exposure tracking.">
   <title>H2S Badge Reader</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png">
@@ -24,9 +24,9 @@
   <main class="app-shell">
     <header class="topbar">
       <div class="brand"><span class="brand-mark">H₂S</span><span>Badge Reader</span></div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <button id="pwaInstallButton" class="secondary-button" style="display:none;height:34px;padding:0 12px;font-size:11px;cursor:pointer;" type="button">⬇ Install</button>
-        <div class="offline-chip"><i></i> Offline mode</div>
+      <div class="topbar-actions">
+        <button id="pwaInstallButton" class="secondary-button" style="display:none;height:36px;padding:0 12px;font-size:12px;cursor:pointer;" type="button">Install</button>
+        <div class="offline-chip">Offline mode</div>
         <button id="themeToggle" class="theme-toggle-btn" type="button" aria-label="Toggle theme" title="Toggle theme">
           <svg class="sun-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
           <svg class="moon-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -36,11 +36,9 @@
 
     <section class="workspace">
       <div class="page-heading">
-        <div>
-          <p class="eyebrow">FIELD CAPTURE / <span id="captureDate"></span></p>
-          <h1>Read a badge.</h1>
-          <p class="lede">Place the full badge inside the frame. The result is calculated on this device.</p>
-        </div>
+        <p class="eyebrow">Field capture / <span id="captureDate"></span></p>
+        <h1>Read a badge</h1>
+        <p class="lede">Place the full badge inside the frame. The result is calculated on this device.</p>
       </div>
 
       <section class="capture-layout">
@@ -48,64 +46,49 @@
           <div class="camera-frame" id="cameraFrame">
             <video id="cameraFeed" autoplay playsinline muted></video>
             <div class="camera-placeholder" id="cameraPlaceholder">
-              <div class="camera-glyph">＋</div>
               <strong>Camera ready</strong>
-              <span>ArUco markers will align the badge</span>
+              <span>Tap to start preview or upload an image</span>
             </div>
             <div class="badge-guide" id="badgeGuide" aria-hidden="true"></div>
             <canvas class="roi-debug-overlay" id="roiDebugOverlay" hidden></canvas>
-            <div class="frame-corners" aria-hidden="true"><b></b><b></b><b></b><b></b></div>
-            <div class="scan-line" aria-hidden="true"></div>
-            <div class="camera-state" id="cameraState">LIVE PREVIEW</div>
+            <div class="camera-state" id="cameraState">Live preview</div>
           </div>
           <div class="capture-actions">
-            <button class="secondary-button" id="uploadButton">Upload image</button>
+            <button class="secondary-button" id="uploadButton" type="button">Upload image</button>
             <input id="imageInput" type="file" accept="image/*" hidden>
-            <button class="capture-button" id="captureButton"><span></span> Capture 3 frames</button>
-            <select id="samplePpmSelect" class="secondary-button" style="padding:0 10px;height:46px;cursor:pointer;font-weight:600;" aria-label="Select exposure level to test">
-              <option value="20" selected>20 ppm (High)</option>
-              <option value="10">10 ppm (Threshold)</option>
-              <option value="50">50 ppm (Critical)</option>
-              <option value="5">5 ppm (Moderate)</option>
-              <option value="2">2 ppm (Low)</option>
-              <option value="1">1 ppm (Trace)</option>
-              <option value="0">0 ppm (Clean)</option>
-              <option value="100">100 ppm (Lethal)</option>
-            </select>
-            <button class="secondary-button" id="sampleBadgeButton" type="button" title="Test with calibrated H2S badge">Test badge</button>
+            <button class="capture-button" id="captureButton" type="button">Capture 3 frames</button>
           </div>
-          <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+          <div class="debug-toggles">
             <label class="debug-toggle"><input id="debugToggle" type="checkbox"> Show ROI debug</label>
             <label class="debug-toggle"><input id="permissiveToggle" type="checkbox" checked> Field mode (always estimate)</label>
             <label class="debug-toggle"><input id="chartDemoToggle" type="checkbox"> Demo mode (color-first)</label>
           </div>
-          <p class="camera-note">8 fixed H₂S bands / sealed reference drift compensation / on-device correction. Photos stay local.</p>
         </div>
 
         <aside class="session-panel" id="sessionSection">
-          <div class="panel-header"><span>Current session</span><span class="session-dot"></span></div>
+          <div class="panel-header"><span>Current session</span></div>
           <label>Worker ID<input id="workerId" value="WRK-1048" autocomplete="off"></label>
           <label>Badge ID<input id="badgeId" value="H2S-24091" autocomplete="off"></label>
           <label>Shift ID<input id="shiftId" value="NIGHT-07" autocomplete="off"></label>
-          <label>Exposure duration (minutes)<input id="exposureMinutes" type="number" min="1" max="480" value="15" autocomplete="off"></label>
+          <label>Exposure duration (min)<input id="exposureMinutes" type="number" min="1" max="480" value="15" autocomplete="off"></label>
           <div class="threshold-row"><span>Occupational threshold</span><strong id="thresholdValue">10 ppm·min</strong></div>
-          <button class="text-button" id="clearForm">Clear session data</button>
+          <button class="text-button" id="clearForm" type="button">Clear session data</button>
         </aside>
       </section>
 
       <!-- COLOR-FIRST DEMO READOUT PANEL (TWO ROIS ONLY: 0 PPM REF & SAMPLE) -->
-      <section class="demo-color-panel" id="demoModeSection" style="display:none;margin-top:20px;">
+      <section class="demo-color-panel" id="demoModeSection" style="display:none;">
         <div class="demo-card-container">
           <div class="demo-header-row">
             <div>
-              <span class="pill high" style="font-size:10px;font-weight:700;letter-spacing:0.04em;">DEMO MODE: COLOR-FIRST READOUT</span>
-              <h2 style="font-size:18px;margin:4px 0 2px;">Colorimetry & Chart Alignment</h2>
-              <p class="lede" style="font-size:12px;margin:0;">Two-ROI differential colorimeter: 0 ppm reference patch &amp; sample patch with chart alignment.</p>
+              <p class="eyebrow">Demo mode</p>
+              <h2>Colorimetry & chart alignment</h2>
+              <p class="lede">Two-ROI differential colorimeter: 0 ppm reference patch &amp; sample patch.</p>
             </div>
             <div class="demo-controls-bar">
               <label class="demo-temp-label">
                 <span>Chart temp:</span>
-                <select id="demoTempSelect" class="secondary-button" style="height:32px;padding:0 8px;font-size:12px;border-radius:6px;cursor:pointer;">
+                <select id="demoTempSelect" class="secondary-button" style="height:36px;padding:0 8px;font-size:12px;cursor:pointer;">
                   <option value="25" selected>25°C (Default)</option>
                   <option value="20">20°C</option>
                   <option value="15">15°C</option>
@@ -115,10 +98,9 @@
                 </select>
               </label>
               <div id="demoStabilityBadge" class="stability-badge stable">
-                <span class="stability-dot"></span>
                 <span id="demoStabilityText">Stable (spread: ±0.0)</span>
               </div>
-              <button class="secondary-button" id="demoTestBadgeButton" type="button" style="height:32px;font-size:11px;padding:0 10px;">Load 2-Patch Demo Badge</button>
+              <button class="secondary-button" id="demoTestBadgeButton" type="button" style="height:36px;font-size:12px;padding:0 12px;">Load 2-patch demo badge</button>
             </div>
           </div>
 
@@ -128,7 +110,7 @@
             <div class="demo-patch-card" id="demoCardRef">
               <div class="demo-patch-header">
                 <div class="patch-info">
-                  <span class="patch-badge" style="background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);">REF</span>
+                  <span class="patch-badge">REF</span>
                   <strong>Reference (0 ppm)</strong>
                 </div>
                 <div class="demo-swatch-wrapper">
@@ -141,7 +123,7 @@
                   <span class="metric-val" id="demoMeasuredRef">L*: 45.77, a*: 34.05, b*: -19.46</span>
                 </div>
                 <div class="metric-col">
-                  <small>aligned to chart</small>
+                  <small>Aligned to chart</small>
                   <span class="metric-val highlight" id="demoAlignedRef">45.77, 34.05, -19.46</span>
                 </div>
               </div>
@@ -150,10 +132,10 @@
                 <span class="delta-val">Baseline (dL: 0.00, da: 0.00, db: 0.00, dE: 0.00)</span>
               </div>
               <div class="demo-match-row">
-                <span class="match-tag">closest chart match, demo only</span>
+                <span class="match-tag">Closest chart match</span>
                 <div id="demoMatchRef" class="match-detail"><strong>0 ppm</strong> (dist: 0.00)</div>
               </div>
-              <div class="demo-gate-status" id="demoGatesRef" style="display:flex;gap:6px;margin-top:8px;font-size:11px;">
+              <div class="demo-gate-status" id="demoGatesRef">
                 <span class="gate-tag pass">Uniformity: Pass</span>
                 <span class="gate-tag pass">Clipping: Pass</span>
               </div>
@@ -163,8 +145,8 @@
             <div class="demo-patch-card highlight-card" id="demoCardSample">
               <div class="demo-patch-header">
                 <div class="patch-info">
-                  <span class="patch-badge" style="background:rgba(74,222,128,0.15);color:#4ade80;border:1px solid rgba(74,222,128,0.3);">SMP</span>
-                  <strong>Sample Patch</strong>
+                  <span class="patch-badge">SMP</span>
+                  <strong>Sample patch</strong>
                 </div>
                 <div class="demo-swatch-wrapper">
                   <div class="demo-swatch-box" id="demoSwatchSample" style="background-color:rgb(200,120,80);"></div>
@@ -180,7 +162,7 @@
                   <span id="demoMeasuredS1" style="display:none;">--</span>
                 </div>
                 <div class="metric-col">
-                  <small>aligned to chart</small>
+                  <small>Aligned to chart</small>
                   <span class="metric-val highlight" id="demoAlignedSample">--</span>
                   <!-- Backwards compatibility element -->
                   <span id="demoAlignedS1" style="display:none;">--</span>
@@ -193,12 +175,12 @@
                 <span id="demoDeltaS1" style="display:none;">--</span>
               </div>
               <div class="demo-match-row">
-                <span class="match-tag">closest chart match, demo only</span>
+                <span class="match-tag">Closest chart match</span>
                 <div id="demoMatchSample" class="match-detail">--</div>
                 <!-- Backwards compatibility element -->
                 <div id="demoMatchS1" style="display:none;">--</div>
               </div>
-              <div class="demo-gate-status" id="demoGatesSample" style="display:flex;gap:6px;margin-top:8px;font-size:11px;">
+              <div class="demo-gate-status" id="demoGatesSample">
                 <span class="gate-tag pass">Uniformity: Pass</span>
                 <span class="gate-tag pass">Clipping: Pass</span>
               </div>
@@ -209,12 +191,11 @@
 
       <section class="result-panel" id="resultPanel" aria-live="polite">
         <div class="result-empty" id="resultEmpty">
-          <span class="empty-icon">↗</span>
           <div><strong>Awaiting capture</strong><p>Your corrected dose estimate will appear here.</p></div>
         </div>
         <div class="result-content" id="resultContent" hidden>
           <div class="result-main">
-            <p class="eyebrow">LATEST READING</p>
+            <p class="eyebrow">Latest reading</p>
             <div class="reading-grid">
               <div class="reading-field"><small>Estimated H₂S</small><strong id="concentrationValue">0 ppm-equivalent</strong></div>
               <div class="reading-field"><small>Exposure duration</small><strong id="durationValue">15 min</strong></div>
@@ -225,20 +206,18 @@
             <div class="result-meta"><span id="resultTime"></span><span>Band-fit compensation</span></div>
           </div>
           <div class="result-statuses">
-            <div class="status-card" id="validityCard"><span class="status-icon">✓</span><div><small>Badge validity</small><strong id="validityValue">Valid</strong><p id="validityDetail">Band fit within calibration</p></div></div>
-            <div class="status-card" id="thresholdCard"><span class="status-icon">↓</span><div><small>Exposure threshold</small><strong id="thresholdResult">Within limit</strong><p>Configured limit: 10 ppm·min</p></div></div>
-            <div class="status-card" id="aiStatusCard" style="display:none;"><span class="status-icon" style="color:#c084fc;border-color:rgba(168,85,247,0.5);box-shadow:0 0 16px rgba(168,85,247,0.35);">AI</span><div><small>On-Device AI</small><strong id="aiStatusValue">AI Guided</strong><p id="aiStatusDetail">Localized ROIs & corners</p></div></div>
-            <div class="status-card invalid" id="crossCheckCard" style="display:none;"><span class="status-icon">⚠</span><div><small>Cross-Check</small><strong id="crossCheckValue">Cross-Check Alert</strong><p id="crossCheckDetail">Discrepancy detected</p></div></div>
+            <div class="status-card" id="validityCard"><div><small>Badge validity</small><strong id="validityValue">Valid</strong><p id="validityDetail">Band fit within calibration</p></div></div>
+            <div class="status-card" id="thresholdCard"><div><small>Exposure threshold</small><strong id="thresholdResult">Within limit</strong><p>Configured limit: 10 ppm·min</p></div></div>
+            <div class="status-card" id="aiStatusCard" style="display:none;"><div><small>On-device AI</small><strong id="aiStatusValue">AI Guided</strong><p id="aiStatusDetail">Localized ROIs & corners</p></div></div>
+            <div class="status-card invalid" id="crossCheckCard" style="display:none;"><div><small>Cross-check</small><strong id="crossCheckValue">Cross-Check Alert</strong><p id="crossCheckDetail">Discrepancy detected</p></div></div>
           </div>
         </div>
         <div class="retake-content" id="retakeContent" hidden>
-          <span class="empty-icon">!</span>
           <div>
             <strong>Retake photo</strong>
             <p id="retakeMessage">Capture quality check failed.</p>
-            <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
-              <button class="secondary-button" id="forceEstimateButton" type="button" style="height:32px;font-size:11px;padding:0 12px;">Estimate anyway</button>
-              <button class="secondary-button" id="loadSampleBadgeFromRetake" type="button" style="height:32px;font-size:11px;padding:0 12px;">Load calibrated badge</button>
+            <div style="display:flex;gap:8px;margin-top:8px;">
+              <button class="secondary-button" id="forceEstimateButton" type="button" style="height:36px;font-size:12px;padding:0 12px;">Estimate anyway</button>
             </div>
           </div>
         </div>
@@ -248,12 +227,43 @@
       </section>
 
       <section class="log-section" id="recordsSection">
-        <div class="section-heading"><div><p class="eyebrow">LOCAL RECORDS</p><h2>Recent readings</h2></div><span class="record-count" id="recordCount">0 saved</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Worker / badge</th><th>Shift</th><th>Band estimate</th><th>Exposure dose</th><th>Confidence</th><th>Drift</th></tr></thead><tbody id="recordsBody"><tr class="empty-row"><td colspan="6">No readings yet. Captured records remain available in airplane mode.</td></tr></tbody></table></div>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Local records</p>
+            <h2>Recent readings</h2>
+          </div>
+          <div class="records-header-actions">
+            <span class="record-count" id="recordCount">0 saved</span>
+            <button class="text-button danger-text" id="deleteAllRecordsBtn" type="button">Delete all records</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Worker / badge</th>
+                <th class="col-shift">Shift</th>
+                <th>Band estimate</th>
+                <th>Exposure dose</th>
+                <th class="col-confidence">Confidence</th>
+                <th class="col-drift">Drift</th>
+                <th class="col-actions"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="recordsBody">
+              <tr class="empty-row"><td colspan="7">No readings yet. Captured records remain available in airplane mode.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section class="compare-panel">
-        <div class="section-heading"><div><p class="eyebrow">COMPARE RECORDS</p><h2>Incremental exposure</h2></div></div>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Compare records</p>
+            <h2>Incremental exposure</h2>
+          </div>
+        </div>
         <div class="compare-controls">
           <label>Earlier record<select id="compareLeftSelect"><option value="">Select earlier reading</option></select></label>
           <label>Later record<select id="compareRightSelect"><option value="">Select later reading</option></select></label>
@@ -261,12 +271,17 @@
         <div class="compare-summary" id="compareSummary">Select two saved readings to view the incremental exposure since the last reading.</div>
       </section>
     </section>
-    <footer><span>LOCAL STORAGE ACTIVE</span><span>Calibration profile v1.6 / 8 fixed bands</span><span>Last sync: never</span></footer>
+
+    <footer>
+      <span>Local storage active</span>
+      <span>Calibration profile v1.6</span>
+      <span>Last sync: never</span>
+    </footer>
   </main>
+
   <div class="crop-modal" id="cropModal" hidden>
     <section class="crop-dialog" role="dialog" aria-modal="true" aria-labelledby="cropTitle">
       <div class="panel-header"><span id="cropTitle">Crop badge</span></div>
-      <p class="crop-instructions">Drag to select the badge, excluding the surrounding background.</p>
       <div class="crop-stage" id="cropStage">
         <img id="cropPreview" alt="Image selected for badge crop">
         <div class="crop-selection" id="cropSelection" aria-hidden="true"></div>
@@ -277,6 +292,19 @@
       </div>
     </section>
   </div>
+
+  <!-- Delete Confirmation Dialog Modal -->
+  <div class="confirm-modal" id="confirmModal" hidden>
+    <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <h3 id="confirmTitle" class="confirm-title">Delete confirmation</h3>
+      <p id="confirmMessage" class="confirm-message">Delete all saved readings? This can't be undone.</p>
+      <div class="confirm-actions">
+        <button class="secondary-button" id="confirmCancelBtn" type="button">Cancel</button>
+        <button class="text-button danger-text" id="confirmDeleteBtn" type="button">Delete</button>
+      </div>
+    </div>
+  </div>
+
   <script src="demo-color-reader.js?v=2.3"></script>
   <script src="ai-detector.js?v=2.3" defer></script>
   <script src="app.js?v=2.3"></script>
@@ -323,9 +351,6 @@
               installBtn.style.display = 'none';
             }
             deferredInstallPrompt = null;
-          } else {
-            // iOS Safari or non-automated browser
-            alert('To install this app on your device:\n\n• iOS: Tap Share then "Add to Home Screen"\n• Android/Chrome: Tap browser menu (⋮) then "Install app"');
           }
         });
       }
@@ -401,7 +426,7 @@
     });
   </script>
 
-  <!-- Floating Pill Bottom Navigation (4 Icons) -->
+  <!-- Bottom Navigation -->
   <nav class="floating-bottom-nav" id="bottomNav" aria-label="Quick navigation">
     <button class="nav-pill-btn active" id="navScan" type="button" aria-label="Scan badge">
       <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
