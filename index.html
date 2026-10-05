@@ -104,6 +104,41 @@
             </div>
           </div>
 
+          <!-- Demo Color Match Result Card -->
+          <div class="demo-summary-card" id="demoSummaryCard">
+            <div class="demo-summary-top">
+              <span class="eyebrow" id="demoEstimateLabel">Demo estimate, color match</span>
+              <div class="demo-estimate-large" id="demoEstimateLargePpm">-- ppm</div>
+            </div>
+            <div class="demo-color-meta-grid">
+              <div class="demo-meta-item">
+                <small>Observed reference hex</small>
+                <div class="hex-badge-row">
+                  <span class="color-dot" id="demoRefDot" style="background-color:#95578D;"></span>
+                  <code id="demoObservedRefHex">#95578D</code>
+                </div>
+              </div>
+              <div class="demo-meta-item">
+                <small>Observed sample hex</small>
+                <div class="hex-badge-row">
+                  <span class="color-dot" id="demoSampleDot"></span>
+                  <code id="demoObservedSampleHex">--</code>
+                </div>
+              </div>
+              <div class="demo-meta-item">
+                <small>Matched chart hex</small>
+                <div class="hex-badge-row">
+                  <span class="color-dot" id="demoChartDot"></span>
+                  <code id="demoMatchedChartHex">--</code>
+                </div>
+              </div>
+              <div class="demo-meta-item">
+                <small>Distance</small>
+                <strong class="demo-meta-value" id="demoMatchDistance">--</strong>
+              </div>
+            </div>
+          </div>
+
           <!-- Single Readout Grid: 2 Patches (Reference + Sample) -->
           <div class="demo-readout-grid demo-two-rois" id="demoReadoutGrid">
             <!-- Reference Patch Card -->

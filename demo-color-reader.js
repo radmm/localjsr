@@ -1,15 +1,23 @@
 /**
  * H2S Badge Reader - Color-First Demo Mode Module
- * Two ROIs only: one 0 ppm reference and one sample.
- * - Clean offscreen canvas sampling with optional 6-swatch correction
- * - Live color swatches, measured Lab (2 decimals)
- * - Chart-aligned Lab: measured sample Lab + (45.77 - Lref, 34.05 - aref, -19.46 - bref)
- * - Delta vs reference: dL, da, db, dE
- * - Nearest chart match with weights L 0.5, a 0.5, b 2 (25 C default, selectable)
- * - Single readout only (Reference & Sample patch)
- * - Stability: 5-frame median, spread (max - min), Stable / Hold steady indicator
- * - Uniformity (stddev <= 24) and clipping (<= 2%) quality gates for both patches
- * - Offline compatible
+ * Color-only match against fixed reference table (25 C):
+ *   0 ppm #95578D
+ *  10 ppm #995873
+ *  20 ppm #9C4F6A
+ *  40 ppm #B26169
+ *  50 ppm #B36567
+ *
+ * Method:
+ * 1. Sample median color of 0 ppm reference patch and sample patch from the same photo
+ *    (clean offscreen canvas, 5 frame median, existing correction).
+ * 2. Convert all colors to Lab internally.
+ * 3. Observed shift: sample Lab minus measured reference Lab.
+ *    Chart shift: chart color Lab minus 0 ppm chart Lab.
+ * 4. Nearest chart shift with weights L 0.3, a 0.3, b 2. Interpolate ppm between two nearest chart points. Clamp 0 to 50.
+ * 5. If top two candidates are within a small distance of each other, show range like "40 to 50 ppm".
+ *    If nearest distance is large (> 25), show "No match, retake".
+ * 6. UI: estimated ppm (large), observed reference hex, observed sample hex, matched chart hex, distance,
+ *    label "Demo estimate, color match".
  */
 
 (function () {
@@ -17,38 +25,19 @@
 
 const DEMO_ESTIMATOR_VERSION = 'color-first-v2.0';
 
-// Fixed chart reference point at 0 ppm
-const CHART_REF_POINT = { L: 45.77, a: 34.05, b: -19.46 };
-
-// Reference table (ppm, temp C, L*, a*, b*)
-var CHART_DEMO_REFERENCE_TABLE = [
-  { ppm: 0,  tempC: 15, L: 45.77, a: 34.05, b: -19.46 },
-  { ppm: 10, tempC: 5,  L: 39.43, a: 33.72, b: -9.73 },
-  { ppm: 10, tempC: 10, L: 45.62, a: 34.82, b: -9.83 },
-  { ppm: 10, tempC: 15, L: 41.63, a: 34.68, b: -7.21 },
-  { ppm: 10, tempC: 20, L: 45.41, a: 35.39, b: -6.28 },
-  { ppm: 10, tempC: 25, L: 45.57, a: 30.22, b: -3.75 },
-  { ppm: 20, tempC: 5,  L: 40.97, a: 35.07, b: -7.39 },
-  { ppm: 20, tempC: 10, L: 45.16, a: 33.53, b: -7.08 },
-  { ppm: 20, tempC: 15, L: 43.86, a: 32.46, b: -2.21 },
-  { ppm: 20, tempC: 20, L: 41.46, a: 33.59, b: -2.12 },
-  { ppm: 20, tempC: 25, L: 43.93, a: 35.10, b: -0.87 },
-  { ppm: 40, tempC: 5,  L: 39.98, a: 34.34, b: 1.43 },
-  { ppm: 40, tempC: 10, L: 39.54, a: 33.19, b: 2.49 },
-  { ppm: 40, tempC: 15, L: 46.18, a: 34.44, b: 4.93 },
-  { ppm: 40, tempC: 20, L: 45.95, a: 34.55, b: 9.31 },
-  { ppm: 40, tempC: 25, L: 50.79, a: 33.50, b: 10.43 },
-  { ppm: 50, tempC: 5,  L: 52.12, a: 34.16, b: 4.29 },
-  { ppm: 50, tempC: 10, L: 47.10, a: 38.09, b: 4.91 },
-  { ppm: 50, tempC: 15, L: 46.79, a: 33.24, b: 10.70 },
-  { ppm: 50, tempC: 20, L: 50.64, a: 32.35, b: 10.12 },
-  { ppm: 50, tempC: 25, L: 51.63, a: 31.86, b: 12.39 },
+// Fixed reference table (25 C)
+const DEMO_REFERENCE_TABLE = [
+  { ppm: 0,  hex: '#95578D' },
+  { ppm: 10, hex: '#995873' },
+  { ppm: 20, hex: '#9C4F6A' },
+  { ppm: 40, hex: '#B26169' },
+  { ppm: 50, hex: '#B36567' },
 ];
 
-const DEFAULT_DEMO_MATCH_THRESHOLD = 25.0;
-const DEMO_STABILITY_THRESHOLD = 3.5; // Max spread across L*, a*, b* for stability
-const ROI_STDDEV_THRESHOLD = 24.0;    // Quality gate: max channel stddev for uniformity
-const CLIPPED_PIXEL_THRESHOLD = 0.02; // Quality gate: max fraction of pixels near 0 or 255
+const DEFAULT_DEMO_MATCH_THRESHOLD = 25.0; // Distance considered "large" -> "No match, retake"
+const DEMO_STABILITY_THRESHOLD = 3.5;       // Max spread across L*, a*, b* for stability
+const ROI_STDDEV_THRESHOLD = 24.0;          // Quality gate: max channel stddev for uniformity
+const CLIPPED_PIXEL_THRESHOLD = 0.02;       // Quality gate: max fraction of pixels near 0 or 255
 
 // Two ROIs only: one 0 ppm reference and one sample
 const DEMO_ROIS = {
@@ -76,6 +65,19 @@ const DEMO_ROIS = {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function hexToRgb(hex) {
+  if (!hex || typeof hex !== 'string') return [149, 87, 141];
+  const clean = hex.replace('#', '').trim();
+  const num = parseInt(clean, 16);
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+function rgbToHex(rgb) {
+  if (!rgb || !Array.isArray(rgb)) return '#000000';
+  const [r, g, b] = rgb.map((c) => clamp(Math.round(c), 0, 255));
+  return '#' + [r, g, b].map((x) => x.toString(16).padStart(2, '0')).join('').toUpperCase();
 }
 
 function srgbToLinearChannel(channel) {
@@ -142,14 +144,55 @@ function labToRgb(lab) {
   ];
 }
 
+// Convert the five 25 C reference colors to Lab internally and compute chart shifts vs 0 ppm
+const CHART_REFERENCE_POINTS = DEMO_REFERENCE_TABLE.map((entry) => {
+  const rgb = hexToRgb(entry.hex);
+  const lab = rgbToLab(rgb);
+  return {
+    ppm: entry.ppm,
+    hex: entry.hex.toUpperCase(),
+    rgb,
+    lab,
+    L: lab[0],
+    a: lab[1],
+    b: lab[2],
+    tempC: 25,
+  };
+});
+
+const REF_0_CHART = CHART_REFERENCE_POINTS[0];
+const CHART_REF_POINT = { L: REF_0_CHART.lab[0], a: REF_0_CHART.lab[1], b: REF_0_CHART.lab[2] };
+
+CHART_REFERENCE_POINTS.forEach((pt) => {
+  pt.shift = [
+    Number((pt.lab[0] - REF_0_CHART.lab[0]).toFixed(2)),
+    Number((pt.lab[1] - REF_0_CHART.lab[1]).toFixed(2)),
+    Number((pt.lab[2] - REF_0_CHART.lab[2]).toFixed(2)),
+  ];
+});
+
+// Alias for backwards compatibility
+const CHART_DEMO_REFERENCE_TABLE = CHART_REFERENCE_POINTS;
+
 /**
- * Compute chart-aligned Lab:
- * measured sample Lab plus (45.77 - Lref, 34.05 - aref, -19.46 - bref)
+ * Weighted shift distance: weights L 0.3, a 0.3, b 2
  */
+function calculateShiftDistance(shiftA, shiftB) {
+  const dL = shiftA[0] - shiftB[0];
+  const da = shiftA[1] - shiftB[1];
+  const db = shiftA[2] - shiftB[2];
+  return Math.sqrt(0.3 * dL * dL + 0.3 * da * da + 2.0 * db * db);
+}
+
+function calculateWeightedDistance(lab, row) {
+  const shift = [lab[0] - REF_0_CHART.lab[0], lab[1] - REF_0_CHART.lab[1], lab[2] - REF_0_CHART.lab[2]];
+  return calculateShiftDistance(shift, row.shift);
+}
+
 function computeAlignedLab(sampleLab, refLab) {
-  const dL = CHART_REF_POINT.L - refLab[0];
-  const da = CHART_REF_POINT.a - refLab[1];
-  const db = CHART_REF_POINT.b - refLab[2];
+  const dL = REF_0_CHART.lab[0] - refLab[0];
+  const da = REF_0_CHART.lab[1] - refLab[1];
+  const db = REF_0_CHART.lab[2] - refLab[2];
   return [
     Number((sampleLab[0] + dL).toFixed(2)),
     Number((sampleLab[1] + da).toFixed(2)),
@@ -157,9 +200,6 @@ function computeAlignedLab(sampleLab, refLab) {
   ];
 }
 
-/**
- * Delta vs reference: dL, da, db, dE
- */
 function computeDeltaVsRef(sampleLab, refLab) {
   const dL = Number((sampleLab[0] - refLab[0]).toFixed(2));
   const da = Number((sampleLab[1] - refLab[1]).toFixed(2));
@@ -169,63 +209,182 @@ function computeDeltaVsRef(sampleLab, refLab) {
 }
 
 /**
- * Weighted Euclidean distance in Lab with weights L 0.5, a 0.5, b 2
+ * Parses any color format (hex string, RGB array [0-255], or Lab array) into normalized { lab, rgb, hex }
  */
-function calculateWeightedDistance(lab, row) {
-  const dL = lab[0] - row.L;
-  const da = lab[1] - row.a;
-  const db = lab[2] - row.b;
-  return Math.sqrt(0.5 * dL * dL + 0.5 * da * da + 2.0 * db * db);
+function toColorObject(color, fallbackHex = '#95578D') {
+  if (!color) {
+    const rgb = hexToRgb(fallbackHex);
+    return { hex: fallbackHex.toUpperCase(), rgb, lab: rgbToLab(rgb) };
+  }
+  if (typeof color === 'string') {
+    const rgb = hexToRgb(color);
+    return { hex: color.toUpperCase(), rgb, lab: rgbToLab(rgb) };
+  }
+  if (Array.isArray(color)) {
+    // If negative chromaticity or decimals with L <= 100, treat as Lab
+    const isLab = color.some((v) => v < 0 || (!Number.isInteger(v) && Math.abs(v) <= 128)) && color[0] <= 100;
+    if (isLab) {
+      const rgb = labToRgb(color);
+      return {
+        lab: [Number(color[0].toFixed(2)), Number(color[1].toFixed(2)), Number(color[2].toFixed(2))],
+        rgb,
+        hex: rgbToHex(rgb),
+      };
+    }
+    // Otherwise RGB
+    const rgb = [clamp(Math.round(color[0]), 0, 255), clamp(Math.round(color[1]), 0, 255), clamp(Math.round(color[2]), 0, 255)];
+    return {
+      rgb,
+      lab: rgbToLab(rgb),
+      hex: rgbToHex(rgb),
+    };
+  }
+  if (color.lab) {
+    const lab = color.lab;
+    const rgb = color.rgb || labToRgb(lab);
+    const hex = color.hex || rgbToHex(rgb);
+    return { lab, rgb, hex };
+  }
+  return { hex: fallbackHex.toUpperCase(), rgb: hexToRgb(fallbackHex), lab: rgbToLab(hexToRgb(fallbackHex)) };
 }
 
 /**
- * Nearest chart match (25 C by default, temperature selectable)
+ * Color-only match against fixed 25 C reference table:
+ * 1. Convert all colors to Lab internally
+ * 2. Observed shift: sample Lab minus measured reference Lab
+ * 3. Find nearest chart shift using weights L 0.3, a 0.3, b 2
+ * 4. Interpolate ppm between two nearest points. Clamp 0 to 50.
+ * 5. If top two are within a small distance of each other, show range like "40 to 50 ppm".
+ *    If nearest distance > 25, show "No match, retake".
  */
-function findNearestChartMatch(alignedLab, { tempC = 25, threshold = DEFAULT_DEMO_MATCH_THRESHOLD } = {}) {
-  let candidateRows = CHART_DEMO_REFERENCE_TABLE;
-  if (tempC !== null && tempC !== undefined && tempC !== 'all') {
-    const targetTemp = Number(tempC);
-    const filtered = CHART_DEMO_REFERENCE_TABLE.filter(
-      (row) => row.ppm === 0 || Math.abs(row.tempC - targetTemp) < 1e-4
-    );
-    if (filtered.length > 0) candidateRows = filtered;
+function matchDemoColor(refInput, sampleInput, { threshold = DEFAULT_DEMO_MATCH_THRESHOLD } = {}) {
+  const refColor = toColorObject(refInput, '#95578D');
+  const sampleColor = toColorObject(sampleInput, '#95578D');
+
+  const refLab = refColor.lab;
+  const sampleLab = sampleColor.lab;
+
+  // Observed shift: sample Lab minus measured reference Lab
+  const observedShift = [
+    sampleLab[0] - refLab[0],
+    sampleLab[1] - refLab[1],
+    sampleLab[2] - refLab[2],
+  ];
+
+  // Score against chart shifts
+  const scored = CHART_REFERENCE_POINTS.map((pt) => {
+    const dist = calculateShiftDistance(observedShift, pt.shift);
+    return {
+      ...pt,
+      distance: dist,
+    };
+  }).sort((a, b) => a.distance - b.distance);
+
+  const first = scored[0];
+  const second = scored[1];
+  const d1 = first.distance;
+  const d2 = second.distance;
+
+  // Check if nearest distance is large
+  if (d1 > threshold) {
+    return {
+      matched: false,
+      ppm: null,
+      estimatedPpm: null,
+      range: null,
+      isRange: false,
+      displayPpm: 'No match, retake',
+      observedRefHex: refColor.hex,
+      observedSampleHex: sampleColor.hex,
+      matchedChartHex: first.hex,
+      distance: Number(d1.toFixed(2)),
+      label: 'Demo estimate, color match',
+      refColor,
+      sampleColor,
+      candidates: scored,
+    };
   }
 
-  let closest = null;
-  let minDistance = Infinity;
+  // Interpolate ppm between two nearest chart points
+  let interpolatedPpm;
+  if (d1 < 1e-4) {
+    interpolatedPpm = first.ppm;
+  } else {
+    const w1 = 1 / Math.max(d1, 1e-6);
+    const w2 = 1 / Math.max(d2, 1e-6);
+    interpolatedPpm = (first.ppm * w1 + second.ppm * w2) / (w1 + w2);
+  }
+  const estimatedPpm = clamp(Math.round(interpolatedPpm * 10) / 10, 0, 50);
 
-  for (const row of candidateRows) {
-    const dist = calculateWeightedDistance(alignedLab, row);
-    if (dist < minDistance) {
-      minDistance = dist;
-      closest = row;
+  // Range determination: if top two candidates are within a small distance of each other (e.g. 40 and 50)
+  const candShiftDist = calculateShiftDistance(first.shift, second.shift);
+  let isRange = false;
+  let rangeStr = null;
+
+  if (candShiftDist <= 4.0 || Math.abs(d2 - d1) <= 2.5) {
+    const minPpm = Math.min(first.ppm, second.ppm);
+    const maxPpm = Math.max(first.ppm, second.ppm);
+    if (minPpm !== maxPpm) {
+      isRange = true;
+      rangeStr = `${minPpm} to ${maxPpm} ppm`;
     }
   }
 
-  if (!closest || minDistance > threshold) {
+  const displayPpm = isRange ? rangeStr : `${estimatedPpm} ppm`;
+
+  return {
+    matched: true,
+    ppm: estimatedPpm,
+    estimatedPpm,
+    range: rangeStr,
+    isRange,
+    displayPpm,
+    observedRefHex: refColor.hex,
+    observedSampleHex: sampleColor.hex,
+    matchedChartHex: first.hex,
+    distance: Number(d1.toFixed(2)),
+    label: 'Demo estimate, color match',
+    refColor,
+    sampleColor,
+    candidates: scored,
+    first,
+    second,
+    valueOf() {
+      return this.ppm;
+    },
+    toString() {
+      return this.displayPpm;
+    },
+  };
+}
+
+function findNearestChartMatch(alignedLab, { threshold = DEFAULT_DEMO_MATCH_THRESHOLD } = {}) {
+  const match = matchDemoColor(REF_0_CHART.lab, alignedLab, { threshold });
+  if (!match.matched) {
     return {
       matched: false,
       label: 'No match',
-      distance: Number(minDistance.toFixed(2)),
+      distance: match.distance,
       ppm: null,
-      cellLab: closest ? [closest.L, closest.a, closest.b] : null,
-      cellTempC: closest ? closest.tempC : null,
+      chartHex: match.matchedChartHex,
+      cellLab: match.first ? match.first.lab : null,
+      cellTempC: 25,
     };
   }
 
   return {
     matched: true,
-    label: 'closest chart match, demo only',
-    ppm: closest.ppm,
-    distance: Number(minDistance.toFixed(2)),
-    cellLab: [closest.L, closest.a, closest.b],
-    cellTempC: closest.tempC,
+    label: 'Demo estimate, color match',
+    ppm: match.ppm,
+    displayPpm: match.displayPpm,
+    range: match.range,
+    distance: match.distance,
+    chartHex: match.matchedChartHex,
+    cellLab: match.first.lab,
+    cellTempC: 25,
   };
 }
 
-/**
- * Sample median RGB for an ROI from a clean offscreen canvas with no CSS filter
- */
 function sampleRoiMedian(context, width, height, roi) {
   const margin = 0.20;
   const innerX = roi.x + roi.w * margin;
@@ -262,9 +421,6 @@ function sampleRoiMedian(context, width, height, roi) {
   return [getMedian(channels[0]), getMedian(channels[1]), getMedian(channels[2])];
 }
 
-/**
- * Evaluates uniformity gate (stddev <= 24) and clipping gate (clipped <= 2%) for an ROI
- */
 function evaluatePatchGates(context, width, height, roi) {
   const margin = 0.20;
   const innerX = roi.x + roi.w * margin;
@@ -339,9 +495,6 @@ function evaluatePatchGates(context, width, height, roi) {
   };
 }
 
-/**
- * Checks quality gates for both patches (ref & sample)
- */
 function checkDemoQualityGates(canvas, rois = DEMO_ROIS) {
   const ctx = canvas.getContext('2d');
   const results = {};
@@ -364,9 +517,6 @@ function checkDemoQualityGates(canvas, rois = DEMO_ROIS) {
   };
 }
 
-/**
- * Samples the 2 Demo ROIs (ref + sample) from a clean offscreen canvas
- */
 function sampleDemoCanvas(canvas, { correction = null } = {}) {
   const width = canvas.width;
   const height = canvas.height;
@@ -400,7 +550,6 @@ function sampleDemoCanvas(canvas, { correction = null } = {}) {
     }
   }
 
-  // Backwards compatibility alias: s1 -> sample
   if (roiMedians.sample) {
     roiMedians.s1 = roiMedians.sample;
     measuredLab.s1 = measuredLab.sample;
@@ -415,9 +564,6 @@ function sampleDemoCanvas(canvas, { correction = null } = {}) {
   };
 }
 
-/**
- * Rolling 5-frame stability buffer
- */
 class DemoStabilityBuffer {
   constructor(size = 5, threshold = DEMO_STABILITY_THRESHOLD) {
     this.size = size;
@@ -440,7 +586,6 @@ class DemoStabilityBuffer {
     const count = this.frames.length;
     const roiKeys = ['ref', 'sample'];
 
-    // If single frame (e.g. uploaded static image), immediately stable
     if (count === 1) {
       const single = this.frames[0];
       const spreads = {};
@@ -500,7 +645,6 @@ class DemoStabilityBuffer {
       ];
     }
 
-    // Alias s1 for backwards compatibility
     medianLab.s1 = medianLab.sample;
     medianRgb.s1 = medianRgb.sample;
 
@@ -523,39 +667,50 @@ class DemoStabilityBuffer {
   }
 }
 
-/**
- * Color-first readout processor for the 2 ROIs (ref + sample)
- */
-function processDemoColorReadout(sampleLabs, { tempC = 25, threshold = DEFAULT_DEMO_MATCH_THRESHOLD } = {}) {
-  const refLab = sampleLabs.ref;
-  if (!refLab) {
-    throw new Error('Reference Lab (0 ppm) is required.');
-  }
+function processDemoColorReadout(sampleLabs, { threshold = DEFAULT_DEMO_MATCH_THRESHOLD } = {}) {
+  const refInput = sampleLabs.ref;
+  const sampleInput = sampleLabs.sample || sampleLabs.s1;
 
-  const sampleLab = sampleLabs.sample || sampleLabs.s1;
-  if (!sampleLab) {
-    throw new Error('Sample Lab is required.');
-  }
+  if (!refInput) throw new Error('Reference color (0 ppm) is required.');
+  if (!sampleInput) throw new Error('Sample color is required.');
 
-  // 1. Reference: aligned to chart is fixed (45.77, 34.05, -19.46)
-  const refAligned = [CHART_REF_POINT.L, CHART_REF_POINT.a, CHART_REF_POINT.b];
-  const refDelta = { dL: 0, da: 0, db: 0, dE: 0 };
-  const refMatch = findNearestChartMatch(refAligned, { tempC, threshold });
+  const match = matchDemoColor(refInput, sampleInput, { threshold });
 
-  // 2. Sample: chart-aligned Lab = measured sample Lab + (45.77 - Lref, 34.05 - aref, -19.46 - bref)
-  const sampleAligned = computeAlignedLab(sampleLab, refLab);
-  const sampleDelta = computeDeltaVsRef(sampleLab, refLab);
-  const sampleMatch = findNearestChartMatch(sampleAligned, { tempC, threshold });
+  const refAligned = [REF_0_CHART.lab[0], REF_0_CHART.lab[1], REF_0_CHART.lab[2]];
+  const sampleAligned = computeAlignedLab(match.sampleColor.lab, match.refColor.lab);
+  const sampleDelta = computeDeltaVsRef(match.sampleColor.lab, match.refColor.lab);
 
   const refResult = {
     key: 'ref',
     name: 'Reference (0 ppm)',
     shortName: 'REF',
     color: DEMO_ROIS.ref.color,
-    measuredLab: refLab,
+    measuredLab: match.refColor.lab,
     alignedLab: refAligned,
-    deltaVsRef: refDelta,
-    nearestMatch: refMatch,
+    hex: match.observedRefHex,
+    deltaVsRef: { dL: 0, da: 0, db: 0, dE: 0 },
+    nearestMatch: {
+      matched: true,
+      ppm: 0,
+      distance: 0,
+      chartHex: REF_0_CHART.hex,
+      label: 'Demo estimate, color match',
+      cellLab: REF_0_CHART.lab,
+      cellTempC: 25,
+    },
+  };
+
+  const sampleNearestMatch = {
+    matched: match.matched,
+    ppm: match.ppm,
+    estimatedPpm: match.estimatedPpm,
+    range: match.range,
+    displayPpm: match.displayPpm,
+    distance: match.distance,
+    chartHex: match.matchedChartHex,
+    label: match.label,
+    cellLab: match.first ? match.first.lab : null,
+    cellTempC: 25,
   };
 
   const sampleResult = {
@@ -563,46 +718,58 @@ function processDemoColorReadout(sampleLabs, { tempC = 25, threshold = DEFAULT_D
     name: 'Sample Patch',
     shortName: 'SMP',
     color: DEMO_ROIS.sample.color,
-    measuredLab: sampleLab,
+    measuredLab: match.sampleColor.lab,
     alignedLab: sampleAligned,
+    hex: match.observedSampleHex,
     deltaVsRef: sampleDelta,
-    nearestMatch: sampleMatch,
-  };
-
-  const alignedLabs = {
-    ref: refAligned,
-    sample: sampleAligned,
-    s1: sampleAligned,
-  };
-
-  const deltas = {
-    ref: refDelta,
-    sample: sampleDelta,
-    s1: sampleDelta,
-  };
-
-  const matches = {
-    ref: refMatch,
-    sample: sampleMatch,
-    s1: sampleMatch,
+    nearestMatch: sampleNearestMatch,
+    ppm: match.ppm,
+    displayPpm: match.displayPpm,
+    range: match.range,
   };
 
   return {
     version: DEMO_ESTIMATOR_VERSION,
-    tempC,
+    tempC: 25,
+    matched: match.matched,
+    ppm: match.ppm,
+    estimatedPpm: match.estimatedPpm,
+    range: match.range,
+    displayPpm: match.displayPpm,
+    isRange: match.isRange,
+    distance: match.distance,
+    label: match.label,
+    observedRefHex: match.observedRefHex,
+    observedSampleHex: match.observedSampleHex,
+    matchedChartHex: match.matchedChartHex,
     ref: refResult,
     sample: sampleResult,
-    s1: sampleResult, // alias
-    alignedLabs,
-    deltas,
-    matches,
+    s1: sampleResult,
+    alignedLabs: {
+      ref: refAligned,
+      sample: sampleAligned,
+      s1: sampleAligned,
+    },
+    deltas: {
+      ref: { dL: 0, da: 0, db: 0, dE: 0 },
+      sample: sampleDelta,
+      s1: sampleDelta,
+    },
+    matches: {
+      ref: refResult.nearestMatch,
+      sample: sampleNearestMatch,
+      s1: sampleNearestMatch,
+    },
+    valueOf() {
+      return this.ppm;
+    },
+    toString() {
+      return this.displayPpm;
+    },
   };
 }
 
-/**
- * Creates a synthetic demo badge canvas with the two ROIs (ref + sample)
- */
-function createDemoBadgeCanvas({ tempC = 25, samplePpm = 20, tint = [0, 0, 0], noiseStddev = 0, clippedPixels = 0, clipRatio = 0, saturated = false } = {}) {
+function createDemoBadgeCanvas({ samplePpm = 20, tint = [0, 0, 0], noiseStddev = 0, clippedPixels = 0, clipRatio = 0, saturated = false } = {}) {
   const width = 640;
   const height = 480;
 
@@ -611,7 +778,6 @@ function createDemoBadgeCanvas({ tempC = 25, samplePpm = 20, tint = [0, 0, 0], n
   if (isBrowserCanvas) {
     canvas = document.createElement('canvas');
   } else {
-    // Mock canvas for node testing
     const pixels = new Uint8ClampedArray(width * height * 4);
     canvas = {
       width,
@@ -643,14 +809,11 @@ function createDemoBadgeCanvas({ tempC = 25, samplePpm = 20, tint = [0, 0, 0], n
   const ctx = isBrowserCanvas ? canvas.getContext('2d') : null;
   if (ctx) ctx.filter = 'none';
 
-  // Find chart colors
-  const refRow = CHART_DEMO_REFERENCE_TABLE.find((r) => r.ppm === 0);
-  const refRgb = labToRgb([refRow.L + tint[0], refRow.a + tint[1], refRow.b + tint[2]]);
+  const refPoint = CHART_REFERENCE_POINTS.find((r) => r.ppm === 0);
+  const refRgb = labToRgb([refPoint.lab[0] + tint[0], refPoint.lab[1] + tint[1], refPoint.lab[2] + tint[2]]);
 
-  const sampleRow = CHART_DEMO_REFERENCE_TABLE.find(
-    (r) => r.ppm === samplePpm && (tempC === 'all' || Math.abs(r.tempC - tempC) < 1e-4)
-  ) || refRow;
-  const sampleRgb = labToRgb([sampleRow.L + tint[0], sampleRow.a + tint[1], sampleRow.b + tint[2]]);
+  const samplePoint = CHART_REFERENCE_POINTS.find((r) => r.ppm === samplePpm) || refPoint;
+  const sampleRgb = labToRgb([samplePoint.lab[0] + tint[0], samplePoint.lab[1] + tint[1], samplePoint.lab[2] + tint[2]]);
 
   const colors = {
     ref: refRgb,
@@ -658,7 +821,6 @@ function createDemoBadgeCanvas({ tempC = 25, samplePpm = 20, tint = [0, 0, 0], n
   };
 
   if (isBrowserCanvas && ctx) {
-    // Background card
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(0, 0, width, height);
 
@@ -675,7 +837,6 @@ function createDemoBadgeCanvas({ tempC = 25, samplePpm = 20, tint = [0, 0, 0], n
       ctx.fillRect(rx, ry, rw, rh);
     }
   } else {
-    // Fill node mock pixels
     const px = canvas._pixels;
     for (let i = 0; i < px.length; i += 4) {
       px[i] = 248;
@@ -697,7 +858,6 @@ function createDemoBadgeCanvas({ tempC = 25, samplePpm = 20, tint = [0, 0, 0], n
           let g = c[1];
           let b = c[2];
 
-          // Noise injection for uniformity test (stddev > 24)
           if (noiseStddev > 0 && key === 'sample') {
             const noise = ((pixelIndex % 2 === 0 ? 1 : -1) * noiseStddev * 1.5);
             r = clamp(Math.round(r + noise), 10, 240);
@@ -705,7 +865,6 @@ function createDemoBadgeCanvas({ tempC = 25, samplePpm = 20, tint = [0, 0, 0], n
             b = clamp(Math.round(b + noise), 10, 240);
           }
 
-          // Clipping injection for clipping test (> 2% saturated pixels)
           if (key === 'sample' && (saturated || clippedPixels > 0 || clipRatio > 0)) {
             r = 255;
             g = 255;
@@ -727,6 +886,8 @@ function createDemoBadgeCanvas({ tempC = 25, samplePpm = 20, tint = [0, 0, 0], n
 
 const DemoColorReaderModule = {
   DEMO_ESTIMATOR_VERSION,
+  DEMO_REFERENCE_TABLE,
+  CHART_REFERENCE_POINTS,
   CHART_REF_POINT,
   CHART_DEMO_REFERENCE_TABLE,
   DEMO_ROIS,
@@ -735,13 +896,17 @@ const DemoColorReaderModule = {
   ROI_STDDEV_THRESHOLD,
   CLIPPED_PIXEL_THRESHOLD,
   clamp,
+  hexToRgb,
+  rgbToHex,
   srgbToLinearChannel,
   linearToSrgbChannel,
   rgbToLab,
   labToRgb,
   computeAlignedLab,
   computeDeltaVsRef,
+  calculateShiftDistance,
   calculateWeightedDistance,
+  matchDemoColor,
   findNearestChartMatch,
   sampleRoiMedian,
   evaluatePatchGates,

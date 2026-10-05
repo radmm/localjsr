@@ -348,83 +348,74 @@ assert.equal(savedRec.demoEstimatorVersion, 'color-first-v2.0');
 assert.ok(savedRec.demoRoiMedians.ref);
 assert.ok(savedRec.demoRoiMedians.sample || savedRec.demoRoiMedians.s1);
 
-// Test 2: Aligned Lab of the reference must equal (45.77, 34.05, -19.46)
-const refLab1 = [52.34, 28.12, -12.45];
-assert.deepEqual(demoColorReader.computeAlignedLab(refLab1, refLab1), [45.77, 34.05, -19.46]);
+// Test 2: Reference #95578D with sample equal to each of the four hexes must return 10, 20, 40, 50 ppm. Sample equal to #95578D returns 0.
+const refHex = '#95578D';
+assert.equal(demoColorReader.matchDemoColor(refHex, '#95578D').ppm, 0, 'Sample equal to #95578D must return 0 ppm');
+assert.equal(demoColorReader.matchDemoColor(refHex, '#995873').ppm, 10, 'Sample equal to #995873 must return 10 ppm');
+assert.equal(demoColorReader.matchDemoColor(refHex, '#9C4F6A').ppm, 20, 'Sample equal to #9C4F6A must return 20 ppm');
+assert.equal(demoColorReader.matchDemoColor(refHex, '#B26169').ppm, 40, 'Sample equal to #B26169 must return 40 ppm');
+assert.equal(demoColorReader.matchDemoColor(refHex, '#B36567').ppm, 50, 'Sample equal to #B36567 must return 50 ppm');
 
-const refLab2 = [45.77, 34.05, -19.46];
-assert.deepEqual(demoColorReader.computeAlignedLab(refLab2, refLab2), [45.77, 34.05, -19.46]);
+// Test 2b: Verified via processDemoColorReadout
+assert.equal(demoColorReader.processDemoColorReadout({ ref: refHex, sample: '#95578D' }).ppm, 0);
+assert.equal(demoColorReader.processDemoColorReadout({ ref: refHex, sample: '#995873' }).ppm, 10);
+assert.equal(demoColorReader.processDemoColorReadout({ ref: refHex, sample: '#9C4F6A' }).ppm, 20);
+assert.equal(demoColorReader.processDemoColorReadout({ ref: refHex, sample: '#B26169' }).ppm, 40);
+assert.equal(demoColorReader.processDemoColorReadout({ ref: refHex, sample: '#B36567' }).ppm, 50);
 
-const arbitraryRef = [39.10, 41.50, -5.20];
-assert.deepEqual(demoColorReader.computeAlignedLab(arbitraryRef, arbitraryRef), [45.77, 34.05, -19.46]);
-
-// Test 3: A uniform tint applied to both patches leaves aligned Lab and deltas unchanged within tolerance
-const basePatches = {
-  ref: [45.77, 34.05, -19.46],
-  sample: [45.57, 30.22, -3.75], // 10 ppm @ 25 C
-};
-
-const tintShift = [12.5, -8.3, 15.2];
-const tintedPatches = {
-  ref: [basePatches.ref[0] + tintShift[0], basePatches.ref[1] + tintShift[1], basePatches.ref[2] + tintShift[2]],
-  sample: [basePatches.sample[0] + tintShift[0], basePatches.sample[1] + tintShift[1], basePatches.sample[2] + tintShift[2]],
-};
-
-const baseReadout = demoColorReader.processDemoColorReadout(basePatches, { tempC: 25 });
-const tintedReadout = demoColorReader.processDemoColorReadout(tintedPatches, { tempC: 25 });
-
-// Aligned Lab unchanged within tolerance
-assert.ok(
-  Math.abs(baseReadout.ref.alignedLab[0] - tintedReadout.ref.alignedLab[0]) < 0.05,
-  'ref aligned L* changed under tint'
-);
-assert.ok(
-  Math.abs(baseReadout.sample.alignedLab[0] - tintedReadout.sample.alignedLab[0]) < 0.05,
-  'sample aligned L* changed under tint'
-);
-assert.ok(
-  Math.abs(baseReadout.sample.alignedLab[1] - tintedReadout.sample.alignedLab[1]) < 0.05,
-  'sample aligned a* changed under tint'
-);
-assert.ok(
-  Math.abs(baseReadout.sample.alignedLab[2] - tintedReadout.sample.alignedLab[2]) < 0.05,
-  'sample aligned b* changed under tint'
-);
-
-// Deltas unchanged within tolerance
-assert.ok(
-  Math.abs(baseReadout.sample.deltaVsRef.dL - tintedReadout.sample.deltaVsRef.dL) < 0.05,
-  'sample delta dL changed under tint'
-);
-assert.ok(
-  Math.abs(baseReadout.sample.deltaVsRef.da - tintedReadout.sample.deltaVsRef.da) < 0.05,
-  'sample delta da changed under tint'
-);
-assert.ok(
-  Math.abs(baseReadout.sample.deltaVsRef.db - tintedReadout.sample.deltaVsRef.db) < 0.05,
-  'sample delta db changed under tint'
-);
-assert.ok(
-  Math.abs(baseReadout.sample.deltaVsRef.dE - tintedReadout.sample.deltaVsRef.dE) < 0.05,
-  'sample delta dE changed under tint'
-);
-
-// Test 4: With the chart reference, feeding each of the four 25 C chart Lab values (10, 20, 40, 50 ppm) one at a time returns that ppm
-const chartRef = [45.77, 34.05, -19.46];
-const chart25Tests = [
-  { ppm: 10, lab: [45.57, 30.22, -3.75] },
-  { ppm: 20, lab: [43.93, 35.10, -0.87] },
-  { ppm: 40, lab: [50.79, 33.50, 10.43] },
-  { ppm: 50, lab: [51.63, 31.86, 12.39] },
+// Test 3: A uniform tint applied to both patches leaves the ppm unchanged within tolerance
+const refBaseLab = demoColorReader.rgbToLab(demoColorReader.hexToRgb('#95578D'));
+const testPpmHexes = [
+  { expectedPpm: 0, hex: '#95578D' },
+  { expectedPpm: 10, hex: '#995873' },
+  { expectedPpm: 20, hex: '#9C4F6A' },
+  { expectedPpm: 40, hex: '#B26169' },
+  { expectedPpm: 50, hex: '#B36567' },
 ];
 
-for (const { ppm, lab } of chart25Tests) {
-  const readout = demoColorReader.processDemoColorReadout({ ref: chartRef, sample: lab }, { tempC: 25 });
-  assert.equal(readout.sample.nearestMatch.matched, true);
-  assert.equal(readout.sample.nearestMatch.ppm, ppm);
-  assert.equal(readout.sample.nearestMatch.distance, 0);
-  assert.deepEqual(readout.sample.nearestMatch.cellLab, lab);
-  assert.deepEqual(readout.sample.alignedLab, lab);
+const tints = [
+  [12.5, -8.3, 15.2],
+  [-10.0, 15.0, -12.0],
+  [5.0, 5.0, 5.0],
+];
+
+for (const { expectedPpm, hex } of testPpmHexes) {
+  const sampleBaseLab = demoColorReader.rgbToLab(demoColorReader.hexToRgb(hex));
+  const baseResult = demoColorReader.matchDemoColor(refBaseLab, sampleBaseLab);
+
+  for (const tint of tints) {
+    const tintedRef = [refBaseLab[0] + tint[0], refBaseLab[1] + tint[1], refBaseLab[2] + tint[2]];
+    const tintedSample = [sampleBaseLab[0] + tint[0], sampleBaseLab[1] + tint[1], sampleBaseLab[2] + tint[2]];
+    const tintedResult = demoColorReader.matchDemoColor(tintedRef, tintedSample);
+
+    assert.ok(
+      Math.abs(baseResult.ppm - tintedResult.ppm) < 1e-4,
+      `Uniform tint ${tint} changed ppm for ${hex} (base: ${baseResult.ppm}, tinted: ${tintedResult.ppm})`
+    );
+    assert.equal(tintedResult.ppm, expectedPpm, `Tinted result ppm must equal expected ppm ${expectedPpm}`);
+  }
+}
+
+// Test 4: 40 and 50 inputs return a ppm or range that includes the true value
+const result40 = demoColorReader.matchDemoColor(refHex, '#B26169');
+const result50 = demoColorReader.matchDemoColor(refHex, '#B36567');
+
+assert.ok(result40.matched, '40 ppm input must match');
+if (result40.isRange) {
+  assert.ok(result40.range.includes('40'), `Range "${result40.range}" must include 40`);
+  const [min40, max40] = result40.range.replace(' ppm', '').split(' to ').map(Number);
+  assert.ok(min40 <= 40 && 40 <= max40, `Range [${min40}, ${max40}] must include 40`);
+} else {
+  assert.equal(result40.ppm, 40, 'ppm must equal 40');
+}
+
+assert.ok(result50.matched, '50 ppm input must match');
+if (result50.isRange) {
+  assert.ok(result50.range.includes('50'), `Range "${result50.range}" must include 50`);
+  const [min50, max50] = result50.range.replace(' ppm', '').split(' to ').map(Number);
+  assert.ok(min50 <= 50 && 50 <= max50, `Range [${min50}, ${max50}] must include 50`);
+} else {
+  assert.equal(result50.ppm, 50, 'ppm must equal 50');
 }
 
 // Test 5: Quality gates - each gate has a passing and a failing fixture

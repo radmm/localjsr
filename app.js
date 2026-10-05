@@ -1282,6 +1282,44 @@ function updateDemoColorReadoutUI(demoResult) {
     stabilityBadge.dataset.hasReadout = 'true';
   }
 
+  // Demo summary card: estimated ppm (large), observed reference hex, observed sample hex, matched chart hex, distance, label
+  const estimateLarge = document.querySelector('#demoEstimateLargePpm');
+  if (estimateLarge) {
+    estimateLarge.textContent = demoResult.displayPpm || (demoResult.ppm !== null ? `${demoResult.ppm} ppm` : 'No match, retake');
+  }
+  const estimateLabel = document.querySelector('#demoEstimateLabel');
+  if (estimateLabel) {
+    estimateLabel.textContent = demoResult.label || 'Demo estimate, color match';
+  }
+  const obsRefHex = document.querySelector('#demoObservedRefHex');
+  if (obsRefHex) {
+    obsRefHex.textContent = demoResult.observedRefHex || '--';
+  }
+  const obsSampleHex = document.querySelector('#demoObservedSampleHex');
+  if (obsSampleHex) {
+    obsSampleHex.textContent = demoResult.observedSampleHex || '--';
+  }
+  const matchedChartHex = document.querySelector('#demoMatchedChartHex');
+  if (matchedChartHex) {
+    matchedChartHex.textContent = demoResult.matchedChartHex || '--';
+  }
+  const matchDist = document.querySelector('#demoMatchDistance');
+  if (matchDist) {
+    matchDist.textContent = typeof demoResult.distance === 'number' ? demoResult.distance.toFixed(2) : '--';
+  }
+  const refDot = document.querySelector('#demoRefDot');
+  if (refDot && demoResult.observedRefHex) {
+    refDot.style.backgroundColor = demoResult.observedRefHex;
+  }
+  const sampleDot = document.querySelector('#demoSampleDot');
+  if (sampleDot && demoResult.observedSampleHex) {
+    sampleDot.style.backgroundColor = demoResult.observedSampleHex;
+  }
+  const chartDot = document.querySelector('#demoChartDot');
+  if (chartDot && demoResult.matchedChartHex) {
+    chartDot.style.backgroundColor = demoResult.matchedChartHex;
+  }
+
   // Reference patch (0 ppm)
   if (demoResult.ref) {
     const ref = demoResult.ref;
