@@ -38,8 +38,8 @@ const BADGE_CONFIG = {
     maxLuminanceStd: 12.0,
     maxClippedFraction: 0.02,
     maxFrameSpread: 6.0,
-    s1MinLabB: 40.0,
-    s1MinLabL: 45.0,
+    s1MinLabB: 50.0,
+    s1MinLabL: 70.0,
     noMatchDist: 12.0,
     lowConfidenceDist: 8.0,
     lowConfidenceDiff: 4.0,
@@ -252,259 +252,10 @@ function matchBadgeFingerprint(fingerprint, customTemplates = null) {
   };
 }
 
-// FORGIVING CLIPPING & PIXEL ANALYSIS
-function analyzePatchPixels(data) {
-  const totalPixels = data.length / 4;
-  const usableR = [];
-  const usableG = [];
-  const usableB = [];
-  const allR = [];
-  const allG = [];
-  const allB = [];
-  const luminances = [];
-  let clippedHigh = 0;
-  let clippedLow = 0;
-
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-
-    allR.push(r);
-    allG.push(g);
-    allB.push(b);
-    luminances.push(0.2126 * r + 0.7152 * g + 0.0722 * b);
-
-    if (r === 255 || g === 255 || b === 255) clippedHigh++;
-    if (r === 0 || g === 0 || b === 0) clippedLow++;
-
-    // Ignore pixels at 0 or 255
-    if (r > 0 && r < 255 && g > 0 && g < 255 && b > 0 && b < 255) {
-      usableR.push(r);
-      usableG.push(g);
-      usableB.push(b);
-    }
-  }
-
-  const usableFraction = totalPixels > 0 ? usableR.length / totalPixels : 0;
-  // Use median of usable pixels, or all if none
-  const medR = usableR.length > 0 ? median(usableR) : median(allR);
-  const medG = usableG.length > 0 ? median(usableG) : median(allG);
-  const medB = usableB.length > 0 ? median(usableB) : median(allB);
-  const rgb = [medR, medG, medB];
-
-  const lumMean = luminances.reduce((a, b) => a + b, 0) / (luminances.length || 1);
-  const lumVar = luminances.reduce((a, b) => a + (b - lumMean) ** 2, 0) / (luminances.length || 1);
-  const lumStd = Math.sqrt(lumVar);
-
-  const minCh = Math.min(medR, medG, medB);
-  const maxCh = Math.max(medR, medG, medB);
-
-  // Status definition:
-  // Red only if fewer than 30% of pixels are usable, or median < 8 or > 247.
-  // Yellow if between 30% and 70% usable (or lumStd > 12).
-  // Green if >= 70% usable and median within 8..247 and lumStd <= 12.
-  let status = 'green';
-  if (usableFraction < 0.30 || minCh < 8 || maxCh > 247) {
-    status = 'red';
-  } else if (usableFraction < 0.70 || lumStd > 12) {
-    status = 'yellow';
-  } else {
-    status = 'green';
-  }
-
-  return {
-    rgb,
-    usableFraction,
-    lumStd,
-    status,
-    totalPixels,
-    usablePixels: usableR.length,
-    clippedHigh,
-    clippedLow,
-    minCh,
-    maxCh,
-  };
-}
-
-// LIVE PATCH GUIDE TIPS (in strict priority order)
-function getLiveGuideTip({ patchStatus = {}, patchMedians = {}, frameSpread = 0, isBadgeDetected = true }) {
-  // Priority 1: Badge not in frame
-  if (!isBadgeDetected) {
-    return 'Place the badge so the six squares sit on the dots.';
-  }
-
-  // Priority 2: Too dark
-  const keyMedians = [patchMedians?.R3, patchMedians?.S2, patchMedians?.S3].filter(Boolean);
-  const avgKeyLum = keyMedians.length
-    ? keyMedians.reduce((acc, c) => acc + (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]), 0) / keyMedians.length
-    : 100;
-  if (avgKeyLum < 35 || (patchMedians?.R3 && (0.2126 * patchMedians.R3[0] + 0.7152 * patchMedians.R3[1] + 0.0722 * patchMedians.R3[2]) < 30)) {
-    return 'Too dark. Move to a brighter spot.';
-  }
-
-  // Priority 3: Glare or too bright
-  const hasKeyGlare = ['R3', 'S2', 'S3'].some((k) => patchStatus?.[k]?.status === 'red' && (patchStatus[k].clippedHigh > 0 || patchStatus[k].maxCh > 245));
-  if (hasKeyGlare || avgKeyLum > 225) {
-    return 'Glare on the badge. Tilt it slightly.';
-  }
-
-  // Priority 4: Uneven light or shadow
-  const hasShadow = ['R3', 'S2', 'S3'].some((k) => patchStatus?.[k]?.lumStd > 12 || patchStatus?.[k]?.status === 'yellow');
-  if (hasShadow) {
-    return 'Shadow on the badge. Move the light or the badge.';
-  }
-
-  // Priority 5: Moving
-  if (frameSpread > BADGE_CONFIG.thresholds.maxFrameSpread) {
-    return 'Hold steady.';
-  }
-
-  // Priority 6: All good
-  return 'Looks good. Hold still.';
-}
-
-// EVALUATE LIVE GUIDE (runs ~4 times a second)
-function evaluateLiveGuide(canvas, { rotated = false, previousMedians = null } = {}) {
-  const width = canvas.width;
-  const height = canvas.height;
-  const ctx = canvas.getContext('2d');
-  ctx.filter = 'none';
-
-  const targetAspect = rotated ? (1 / BADGE_CONFIG.aspectRatio) : BADGE_CONFIG.aspectRatio;
-  let rWidth, rHeight;
-  if (width / height > targetAspect) {
-    rHeight = Math.round(height * 0.76);
-    rWidth = Math.round(rHeight * targetAspect);
-  } else {
-    rWidth = Math.round(width * 0.76);
-    rHeight = Math.round(rWidth / targetAspect);
-  }
-  const rX = Math.round((width - rWidth) / 2);
-  const rY = Math.round((height - rHeight) / 2);
-  const rect = { x: rX, y: rY, w: rWidth, h: rHeight };
-
-  const patchKeys = Object.keys(BADGE_CONFIG.patches);
-  const patchStatus = {};
-  const patchMedians = {};
-
-  for (const key of patchKeys) {
-    const patch = BADGE_CONFIG.patches[key];
-    const coords = getPatchCoordinates(patch, rotated);
-    const cx = rect.x + coords.x * rect.w;
-    const cy = rect.y + coords.y * rect.h;
-
-    const bw = (rotated ? BADGE_CONFIG.patchBoxSize.h : BADGE_CONFIG.patchBoxSize.w) * rect.w;
-    const bh = (rotated ? BADGE_CONFIG.patchBoxSize.w : BADGE_CONFIG.patchBoxSize.h) * rect.h;
-    const sw = Math.max(3, Math.round(bw * BADGE_CONFIG.sampleCenterFraction));
-    const sh = Math.max(3, Math.round(bh * BADGE_CONFIG.sampleCenterFraction));
-    const sx = Math.max(0, Math.min(width - sw, Math.round(cx - sw / 2)));
-    const sy = Math.max(0, Math.min(height - sh, Math.round(cy - sh / 2)));
-
-    const imgData = ctx.getImageData(sx, sy, sw, sh);
-    const analysis = analyzePatchPixels(imgData.data);
-    patchStatus[key] = analysis;
-    patchMedians[key] = analysis.rgb;
-  }
-
-  // Calculate frame spread vs previous frame
-  let frameSpread = 0;
-  if (previousMedians) {
-    for (const key of ['R3', 'S2', 'S3']) {
-      if (previousMedians[key] && patchMedians[key]) {
-        for (let ch = 0; ch < 3; ch++) {
-          const diff = Math.abs(patchMedians[key][ch] - previousMedians[key][ch]);
-          if (diff > frameSpread) frameSpread = diff;
-        }
-      }
-    }
-  }
-
-  // Check if badge is detected in frame:
-  // S1 is yellow (Lab b* > 50, L* > 70) or S1 is glared (status red with clipped pixels)
-  // And not all 6 patches are pure background/identical
-  const s1Lab = rgbToLab(patchMedians.S1 || [0, 0, 0]);
-  const isS1Yellow = s1Lab[2] > 40 && s1Lab[0] > 55;
-  const isS1Glared = patchStatus.S1?.status === 'red' && patchStatus.S1?.clippedHigh > 0;
-  const isBadgeDetected = isS1Yellow || isS1Glared;
-
-  const tip = getLiveGuideTip({
-    patchStatus,
-    patchMedians,
-    frameSpread,
-    isBadgeDetected,
-  });
-
-  const isKeyPatchesUsable = ['R3', 'S2', 'S3'].every((k) => patchStatus[k]?.status === 'green' || patchStatus[k]?.status === 'yellow');
-  const isStable = frameSpread <= BADGE_CONFIG.thresholds.maxFrameSpread;
-
-  return {
-    patchStatus,
-    patchMedians,
-    frameSpread,
-    isBadgeDetected,
-    tip,
-    isKeyPatchesUsable,
-    isStable,
-  };
-}
-
-// AUTO CAPTURE CONTROLLER
-class AutoCaptureEngine {
-  constructor({ onCapture = null, onBeep = null, onFlash = null, delayMs = 1000, cooldownMs = 3000 } = {}) {
-    this.enabled = true;
-    this.delayMs = delayMs;
-    this.cooldownMs = cooldownMs;
-    this.onCapture = onCapture;
-    this.onBeep = onBeep;
-    this.onFlash = onFlash;
-    this.stableStartTime = null;
-    this.lastCaptureTime = -1;
-    this.isCapturing = false;
-  }
-
-  update({ isKeyPatchesUsable, isStable, now = Date.now() }) {
-    if (!this.enabled || this.isCapturing) {
-      this.stableStartTime = null;
-      return { fired: false, progress: 0 };
-    }
-
-    if (this.lastCaptureTime >= 0 && (now - this.lastCaptureTime) < this.cooldownMs) {
-      this.stableStartTime = null;
-      return { fired: false, progress: 0 };
-    }
-
-    if (isKeyPatchesUsable && isStable) {
-      if (this.stableStartTime === null) {
-        this.stableStartTime = now;
-      }
-      const elapsed = now - this.stableStartTime;
-      if (elapsed >= this.delayMs) {
-        this.lastCaptureTime = now;
-        this.stableStartTime = null;
-        this.isCapturing = true;
-        if (this.onBeep) this.onBeep();
-        if (this.onFlash) this.onFlash();
-        if (this.onCapture) this.onCapture();
-        return { fired: true, progress: 1 };
-      }
-      return { fired: false, progress: elapsed / this.delayMs };
-    } else {
-      this.stableStartTime = null;
-      return { fired: false, progress: 0 };
-    }
-  }
-
-  reset() {
-    this.stableStartTime = null;
-    this.isCapturing = false;
-  }
-}
-
-// ONE CAPTURE FUNCTION (Forgiving & Friendly)
-function captureBadgeReading(frames, { rotated = false, learnedTemplates = null, guideRect = null, isLearning = false } = {}) {
+// ONE CAPTURE FUNCTION
+function captureBadgeReading(frames, { rotated = false, learnedTemplates = null, guideRect = null } = {}) {
   if (!frames || !frames.length) {
-    return { valid: false, refusalReason: 'Hold steady.', tip: 'No frames captured. Align badge and hold still.' };
+    return { valid: false, refusalReason: 'No image frames captured' };
   }
 
   const firstFrame = frames[0];
@@ -516,6 +267,7 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
   if (guideRect) {
     rect = guideRect;
   } else {
+    // Default guide rectangle centered in frame
     const targetAspect = rotated ? (1 / BADGE_CONFIG.aspectRatio) : BADGE_CONFIG.aspectRatio;
     let rWidth, rHeight;
     if (width / height > targetAspect) {
@@ -558,10 +310,43 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
       const sy = Math.max(0, Math.min(height - sh, Math.round(cy - sh / 2)));
 
       const imgData = ctx.getImageData(sx, sy, sw, sh);
-      const analysis = analyzePatchPixels(imgData.data);
+      const data = imgData.data;
+      const totalPixels = data.length / 4;
+
+      const rVals = [];
+      const gVals = [];
+      const bVals = [];
+      const luminances = [];
+      let clippedPixels = 0;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+
+        rVals.push(r);
+        gVals.push(g);
+        bVals.push(b);
+
+        const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        luminances.push(lum);
+
+        if (r <= 0 || r >= 255 || g <= 0 || g >= 255 || b <= 0 || b >= 255) {
+          clippedPixels++;
+        }
+      }
+
+      // Calculate luminance standard deviation
+      const lumMean = luminances.reduce((a, b) => a + b, 0) / (luminances.length || 1);
+      const lumVar = luminances.reduce((a, b) => a + (b - lumMean) ** 2, 0) / (luminances.length || 1);
+      const lumStd = Math.sqrt(lumVar);
+
+      const clippedFraction = totalPixels > 0 ? clippedPixels / totalPixels : 0;
 
       frameResult[key] = {
-        ...analysis,
+        rgb: [median(rVals), median(gVals), median(bVals)],
+        lumStd,
+        clippedFraction,
         bounds: { x: sx, y: sy, w: sw, h: sh },
       };
     }
@@ -569,40 +354,28 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
     patchSamplesPerFrame.push(frameResult);
   }
 
-  // Aggregate patch medians and status across frames
-  const patchMedians = {};
-  const patchStatus = {};
-  for (const key of patchKeys) {
-    const rVals = patchSamplesPerFrame.map((f) => f[key].rgb[0]);
-    const gVals = patchSamplesPerFrame.map((f) => f[key].rgb[1]);
-    const bVals = patchSamplesPerFrame.map((f) => f[key].rgb[2]);
-    patchMedians[key] = [median(rVals), median(gVals), median(bVals)];
-
-    const statuses = patchSamplesPerFrame.map((f) => f[key].status);
-    const avgUsable = patchSamplesPerFrame.reduce((acc, f) => acc + f[key].usableFraction, 0) / patchSamplesPerFrame.length;
-    const avgStd = patchSamplesPerFrame.reduce((acc, f) => acc + f[key].lumStd, 0) / patchSamplesPerFrame.length;
-    
-    // Status prioritization: red if any frame red; else yellow if any frame yellow; else green
-    let aggStatus = 'green';
-    if (statuses.includes('red')) {
-      aggStatus = 'red';
-    } else if (statuses.includes('yellow')) {
-      aggStatus = 'yellow';
+  // 1. Uniformity gate (luminance std <= 12)
+  for (const frameResult of patchSamplesPerFrame) {
+    for (const key of patchKeys) {
+      if (frameResult[key].lumStd > BADGE_CONFIG.thresholds.maxLuminanceStd) {
+        return { valid: false, refusalReason: 'Patch not uniform, retake' };
+      }
     }
-    patchStatus[key] = {
-      status: aggStatus,
-      usableFraction: avgUsable,
-      lumStd: avgStd,
-      clippedHigh: patchSamplesPerFrame[0][key].clippedHigh,
-      maxCh: patchSamplesPerFrame[0][key].maxCh,
-      minCh: patchSamplesPerFrame[0][key].minCh,
-    };
   }
 
-  // 1. Stability gate across frames (spread <= 6)
+  // 2. Clipping gate (over 2% pixels at 0 or 255)
+  for (const frameResult of patchSamplesPerFrame) {
+    for (const key of patchKeys) {
+      if (frameResult[key].clippedFraction > BADGE_CONFIG.thresholds.maxClippedFraction) {
+        return { valid: false, refusalReason: 'Clipping, retake: over 2% pixels at 0 or 255' };
+      }
+    }
+  }
+
+  // 3. Stability gate across frames (spread <= 6)
   if (frames.length > 1) {
     let maxSpread = 0;
-    for (const key of ['R3', 'S2', 'S3']) {
+    for (const key of patchKeys) {
       for (let ch = 0; ch < 3; ch++) {
         const chVals = patchSamplesPerFrame.map((f) => f[key].rgb[ch]);
         const spread = Math.max(...chVals) - Math.min(...chVals);
@@ -610,48 +383,18 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
       }
     }
     if (maxSpread > BADGE_CONFIG.thresholds.maxFrameSpread) {
-      return {
-        valid: false,
-        refusalReason: 'Hold steady.',
-        tip: 'The phone or badge moved during capture.',
-        patchStatus,
-      };
+      return { valid: false, refusalReason: 'Hold steady' };
     }
   }
 
-  // 2. Forgiving Quality Check: ONLY block capture if R3, S2, or S3 is red!
-  // S1 or other patches being red DOES NOT block capture.
-  if (patchStatus.R3.status === 'red') {
-    const isDark = (patchStatus.R3.minCh || 0) < 8;
-    return {
-      valid: false,
-      refusalReason: isDark ? 'Too dark. Move to a brighter spot.' : 'Glare on the badge. Tilt it slightly.',
-      tip: isDark ? 'Move to a brighter area to see the badge clearly.' : 'Tilt the badge slightly away from direct reflections.',
-      patchStatus,
-    };
-  }
-
-  if (patchStatus.S2.status === 'red' || patchStatus.S3.status === 'red') {
-    return {
-      valid: false,
-      refusalReason: 'Glare on the badge. Tilt it slightly.',
-      tip: 'Tilt the badge slightly to avoid glare on the sensing squares.',
-      patchStatus,
-    };
-  }
-
-  // 3. Badge Detection Check (S1 yellow or S1 glared)
-  const s1Lab = rgbToLab(patchMedians.S1);
-  const isS1Yellow = s1Lab[2] > BADGE_CONFIG.thresholds.s1MinLabB && s1Lab[0] > BADGE_CONFIG.thresholds.s1MinLabL;
-  const isS1Glared = patchStatus.S1.status === 'red' && patchStatus.S1.clippedHigh > 0;
-
-  if (!isS1Yellow && !isS1Glared) {
-    return {
-      valid: false,
-      refusalReason: 'Place the badge so the six squares sit on the dots.',
-      tip: 'Ensure all six squares on the badge align with the dots.',
-      patchStatus,
-    };
+  // Median RGB across frames per patch
+  const patchMedians = {};
+  for (const key of patchKeys) {
+    patchMedians[key] = [
+      median(patchSamplesPerFrame.map((f) => f[key].rgb[0])),
+      median(patchSamplesPerFrame.map((f) => f[key].rgb[1])),
+      median(patchSamplesPerFrame.map((f) => f[key].rgb[2])),
+    ];
   }
 
   // 4. Lighting Cancellation (Linear RGB scaling so R3 becomes #C4C3BF)
@@ -659,36 +402,15 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
   const r3MeasLin = rgbToLinear(r3MeasRgb);
   const r3TargLin = rgbToLinear(BADGE_CONFIG.r3TargetRgb);
 
-  let gainR = r3TargLin[0] / Math.max(1e-6, r3MeasLin[0]);
-  let gainG = r3TargLin[1] / Math.max(1e-6, r3MeasLin[1]);
-  let gainB = r3TargLin[2] / Math.max(1e-6, r3MeasLin[2]);
+  const gainR = r3TargLin[0] / Math.max(1e-6, r3MeasLin[0]);
+  const gainG = r3TargLin[1] / Math.max(1e-6, r3MeasLin[1]);
+  const gainB = r3TargLin[2] / Math.max(1e-6, r3MeasLin[2]);
 
   const minGain = BADGE_CONFIG.gainLimits[0];
   const maxGain = BADGE_CONFIG.gainLimits[1];
 
-  if (!isLearning) {
-    if (gainR < minGain || gainR > maxGain || gainG < minGain || gainG > maxGain || gainB < minGain || gainB > maxGain) {
-      let reason = 'Shadow on the badge. Move the light or the badge.';
-      let tip = 'Even out the lighting across the badge.';
-      if (gainR > maxGain || gainG > maxGain || gainB > maxGain) {
-        reason = 'Too dark. Move to a brighter spot.';
-        tip = 'Turn on more light or step closer to a lamp.';
-      } else if (gainR < minGain || gainG < minGain || gainB < minGain) {
-        reason = 'Glare on the badge. Tilt it slightly.';
-        tip = 'Tilt the badge slightly away from direct reflections.';
-      }
-      return {
-        valid: false,
-        refusalReason: reason,
-        tip,
-        patchStatus,
-      };
-    }
-  } else {
-    // "Learning is more lenient than scanning: accept yellow patches, and never fail on lighting alone."
-    gainR = clamp(gainR, 0.5, 2.0);
-    gainG = clamp(gainG, 0.5, 2.0);
-    gainB = clamp(gainB, 0.5, 2.0);
+  if (gainR < minGain || gainR > maxGain || gainG < minGain || gainG > maxGain || gainB < minGain || gainB > maxGain) {
+    return { valid: false, refusalReason: 'Lighting out of range (gain outside 0.6-1.6), retake' };
   }
 
   // Apply gains to all patches
@@ -703,18 +425,19 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
     correctedLab[key] = rgbToLab(corrRgb);
   }
 
-  // 5. Fingerprint = Lab of S3 and S2 after gain (6 numbers)
+  // 5. Yellow S1 Check (Lab b* > 50, L* > 70)
+  const s1Lab = correctedLab.S1;
+  if (s1Lab[2] <= BADGE_CONFIG.thresholds.s1MinLabB || s1Lab[0] <= BADGE_CONFIG.thresholds.s1MinLabL) {
+    return { valid: false, refusalReason: 'No badge found' };
+  }
+
+  // 6. Fingerprint = Lab of S3 and S2 after gain (6 numbers)
   const s3Lab = correctedLab.S3;
   const s2Lab = correctedLab.S2;
   const fingerprint = [...s3Lab, ...s2Lab];
 
-  // 6. Match against templates
+  // 7. Match against templates
   const match = matchBadgeFingerprint(fingerprint, learnedTemplates);
-
-  // 7. Yellow note: "Yellow patches proceed with a small 'Low quality' note."
-  const hasYellowPatch = ['R3', 'S2', 'S3'].some((k) => patchStatus[k]?.status === 'yellow');
-  const isLowQuality = Boolean(hasYellowPatch);
-  const qualityNote = isLowQuality ? 'Low quality' : null;
 
   const s2Hex = rgbToHex(correctedRgb.S2);
   const s3Hex = rgbToHex(correctedRgb.S3);
@@ -725,16 +448,12 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
   return {
     valid: true,
     refusalReason: null,
-    tip: null,
     ppm: match.classPpm,
     approxPpm: match.approxPpm,
     classPpm: match.classPpm,
     confidence: match.confidence,
     status: match.status,
     matched: match.matched,
-    isLowQuality,
-    qualityNote,
-    patchStatus,
     d1: match.d1,
     d2: match.d2,
     label: 'Estimate, color match',
@@ -752,26 +471,6 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
   };
 }
 
-// GUIDED LEARN WORKFLOW (Lenient, no popups)
-function executeLearnBadgeWorkflow(ppm, frames, options = {}) {
-  const reading = captureBadgeReading(frames, { ...options, isLearning: true });
-  if (!reading.valid) {
-    return {
-      success: false,
-      message: reading.refusalReason,
-      tip: reading.tip,
-    };
-  }
-  saveLearnedTemplate(ppm, reading.s3Hex, reading.s2Hex);
-  return {
-    success: true,
-    ppm: Number(ppm),
-    s3Hex: reading.s3Hex,
-    s2Hex: reading.s2Hex,
-    message: `Learned ${ppm} ppm`,
-  };
-}
-
 // Synthetic badge generator for unit tests and local simulations
 function createSyntheticBadge({
   ppm = 20,
@@ -781,8 +480,6 @@ function createSyntheticBadge({
   brightness = 1.0,
   nonUniformStd = 0,
   clipped = false,
-  clippedRatio = 0,
-  s1Glared = false,
   noBadge = false,
   randomColor = false,
   rotated = false,
@@ -882,25 +579,11 @@ function createSyntheticBadge({
           b = clamp(Math.round(b + noise), 0, 255);
         }
 
-        // S1 Glare injection
-        if (s1Glared && key === 'S1') {
-          r = 255;
-          g = 255;
-          b = 255;
-        }
-
         // Clipping injection
         if (clipped && key === 'S3') {
           r = 255;
           g = 255;
           b = 255;
-        } else if (clippedRatio > 0 && key === 'S3') {
-          const totalInPatch = (py2 - py1) * (px2 - px1);
-          if (pixCounter < totalInPatch * clippedRatio) {
-            r = 255;
-            g = 255;
-            b = 255;
-          }
         }
 
         pixels[idx] = r;
@@ -1204,45 +887,26 @@ function showResult(reading) {
   const s2El = document.querySelector('#detailS2Hex');
   const gainsEl = document.querySelector('#detailGains');
   const distEl = document.querySelector('#detailDistances');
-  const usabilityEl = document.querySelector('#detailPatchUsability');
-  const qualityBadge = document.querySelector('#qualityNoteBadge');
-
-  if (qualityBadge) {
-    if (reading.isLowQuality) {
-      qualityBadge.style.display = 'inline-flex';
-    } else {
-      qualityBadge.style.display = 'none';
-    }
-  }
 
   if (s3El) s3El.textContent = `${reading.s3Hex} / matched ${reading.matchedHex?.s3 || '--'}`;
   if (s2El) s2El.textContent = `${reading.s2Hex} / matched ${reading.matchedHex?.s2 || '--'}`;
   if (gainsEl) gainsEl.textContent = `${reading.gains[0]}, ${reading.gains[1]}, ${reading.gains[2]}`;
   if (distEl) distEl.textContent = `d1: ${reading.d1}, d2: ${reading.d2}`;
-  if (usabilityEl && reading.patchStatus) {
-    const list = Object.entries(reading.patchStatus).map(([k, s]) => `${k}: ${Math.round((s.usableFraction ?? 1) * 100)}% (${s.status})`);
-    usabilityEl.textContent = list.join(', ');
-  }
 
   const panel = document.querySelector('#resultPanel');
   if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-function showRefusal(message, tip = '') {
+function showRefusal(message) {
   const resultContent = document.querySelector('#resultContent');
   const resultEmpty = document.querySelector('#resultEmpty');
   const retakeContent = document.querySelector('#retakeContent');
-  const retakeHeading = document.querySelector('#retakeHeading');
   const retakeMsg = document.querySelector('#retakeMessage');
-  const retakeTip = document.querySelector('#retakeTip');
 
   if (resultContent) resultContent.hidden = true;
   if (resultEmpty) resultEmpty.hidden = true;
   if (retakeContent) retakeContent.hidden = false;
-
-  if (retakeHeading) retakeHeading.textContent = message || 'Could not read badge';
-  if (retakeMsg) retakeMsg.textContent = tip || 'Place the badge so the six squares sit on the dots.';
-  if (retakeTip) retakeTip.textContent = '';
+  if (retakeMsg) retakeMsg.textContent = message;
 
   const panel = document.querySelector('#resultPanel');
   if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1394,361 +1058,35 @@ function initBrowser() {
     return frames;
   }
 
-  // Sound, vibration, and flash feedback
-  function playFeedbackTone() {
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (AudioCtx) {
-        const ctx = new AudioCtx();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, ctx.currentTime);
-        gain.gain.setValueAtTime(0.12, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.1);
-      }
-    } catch (e) {}
-
-    try {
-      if (navigator.vibrate) {
-        navigator.vibrate(80);
-      }
-    } catch (e) {}
-  }
-
-  function flashCapturedEffect() {
-    const frame = document.querySelector('#cameraFrame');
-    if (frame) {
-      frame.classList.add('flash-captured');
-      setTimeout(() => frame.classList.remove('flash-captured'), 450);
-    }
-  }
-
-  // Best of 3 capture engine
-  async function runBestOfThreeCapture(options = {}) {
-    let bestAttempt = null;
-
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const frames = await captureFrames(attempt === 1 ? 15 : 8);
-      if (!frames || !frames.length) continue;
-
-      const reading = captureBadgeReading(frames, { rotated: isRotated, ...options });
-      let greenCount = 0;
-      if (reading.patchStatus) {
-        for (const st of Object.values(reading.patchStatus)) {
-          if (st.status === 'green') greenCount++;
-        }
-      }
-
-      const attemptResult = { reading, frames, greenCount, attempt };
-      if (!bestAttempt) {
-        bestAttempt = attemptResult;
-      } else {
-        if (reading.valid && !bestAttempt.reading.valid) {
-          bestAttempt = attemptResult;
-        } else if (reading.valid === bestAttempt.reading.valid && greenCount > bestAttempt.greenCount) {
-          bestAttempt = attemptResult;
-        }
-      }
-
-      if (reading.valid && greenCount >= 5) {
-        break;
-      }
-
-      if (!reading.valid && attempt < 3) {
-        await new Promise((r) => setTimeout(r, 160));
-      }
-    }
-
-    return bestAttempt;
-  }
-
-  let isCaptureInProgress = false;
-
-  async function triggerCapture(isAuto = false) {
-    if (isCaptureInProgress) return;
-    isCaptureInProgress = true;
+  // Handle capture button
+  document.querySelector('#captureButton')?.addEventListener('click', async () => {
     const btn = document.querySelector('#captureButton');
     if (btn) btn.disabled = true;
 
     try {
-      const best = await runBestOfThreeCapture();
-      if (!best || !best.reading) {
-        showRefusal('Place the badge so the six squares sit on the dots.');
+      const frames = await captureFrames(15);
+      if (!frames) {
+        showRefusal('Camera feed not ready. Try uploading an image.');
         return;
       }
 
-      lastCapturedFrames = best.frames;
-      lastReading = best.reading;
+      lastCapturedFrames = frames;
+      const reading = captureBadgeReading(frames, { rotated: isRotated });
+      lastReading = reading;
 
-      if (!best.reading.valid) {
-        showRefusal(best.reading.refusalReason, best.reading.tip);
+      if (!reading.valid) {
+        showRefusal(reading.refusalReason);
       } else {
-        if (isAuto) {
-          playFeedbackTone();
-          flashCapturedEffect();
-        }
-        saveRecord(best.reading);
+        saveRecord(reading);
         renderRecords();
-        showResult(best.reading);
+        showResult(reading);
       }
 
-      if (isDebugActive && best.frames && best.frames[0]) {
-        drawDebugOverlay(best.frames[0], best.reading, isRotated);
+      if (isDebugActive) {
+        drawDebugOverlay(frames[0], reading, isRotated);
       }
     } finally {
-      isCaptureInProgress = false;
       if (btn) btn.disabled = false;
-      autoCaptureEngine.isCapturing = false;
-    }
-  }
-
-  // Auto Capture Controller
-  const autoCaptureEngine = new AutoCaptureEngine({
-    delayMs: 1000,
-    cooldownMs: 3500,
-    onBeep: playFeedbackTone,
-    onFlash: flashCapturedEffect,
-    onCapture: () => {
-      triggerCapture(true);
-    },
-  });
-
-  const autoCaptureToggle = document.querySelector('#autoCaptureToggle');
-  if (autoCaptureToggle) {
-    autoCaptureEngine.enabled = autoCaptureToggle.checked;
-    autoCaptureToggle.addEventListener('change', (e) => {
-      autoCaptureEngine.enabled = e.target.checked;
-    });
-  }
-
-  // Handle capture button
-  document.querySelector('#captureButton')?.addEventListener('click', () => {
-    triggerCapture(false);
-  });
-
-  // Try again button in friendly refusal card
-  document.querySelector('#tryAgainBtn')?.addEventListener('click', () => {
-    document.querySelector('#cameraFrame')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    triggerCapture(false);
-  });
-
-  // Live 4-times-a-second patch guide runner
-  let previousMedians = null;
-  let isLearningActive = false;
-  let isCalibrateAll = false;
-  let calibrateAllIndex = 0;
-  const CALIBRATE_PPM_STEPS = [10, 20, 40, 50];
-  let learnStableStartTime = null;
-
-  function runLivePatchGuide() {
-    const video = document.querySelector('#cameraFeed');
-    const uploadedPreview = document.querySelector('#uploadedPreview');
-    let sourceEl = null;
-
-    if (uploadedPreview && uploadedPreview.style.display !== 'none' && uploadedPreview.naturalWidth) {
-      sourceEl = uploadedPreview;
-    } else if (video && video.videoWidth && video.style.display !== 'none') {
-      sourceEl = video;
-    }
-
-    if (!sourceEl) return;
-
-    const sw = sourceEl.videoWidth || sourceEl.naturalWidth || 640;
-    const sh = sourceEl.videoHeight || sourceEl.naturalHeight || 480;
-
-    let offscreen = document.querySelector('#liveOffscreenCanvas');
-    if (!offscreen) {
-      offscreen = document.createElement('canvas');
-      offscreen.id = 'liveOffscreenCanvas';
-      offscreen.style.display = 'none';
-      document.body.appendChild(offscreen);
-    }
-    offscreen.width = sw;
-    offscreen.height = sh;
-    const ctx = offscreen.getContext('2d');
-    ctx.filter = 'none';
-    ctx.drawImage(sourceEl, 0, 0, sw, sh);
-
-    const guideResult = evaluateLiveGuide(offscreen, {
-      rotated: isRotated,
-      previousMedians,
-    });
-    previousMedians = guideResult.patchMedians;
-
-    // 1. Color each dot R1 to S3 green, yellow, or red
-    for (const [key, info] of Object.entries(guideResult.patchStatus)) {
-      const dotEl = document.querySelector(`.patch-target.${key.toLowerCase()}`);
-      if (dotEl) {
-        dotEl.classList.remove('dot-green', 'dot-yellow', 'dot-red');
-        dotEl.classList.add(`dot-${info.status}`);
-      }
-    }
-
-    // 2. Show one plain line under the viewfinder with the single most useful tip
-    const tipEl = document.querySelector('#viewfinderTip');
-    if (tipEl) {
-      tipEl.textContent = guideResult.tip;
-    }
-
-    // 3. Auto capture or Guided Learning
-    if (isLearningActive) {
-      if (guideResult.isKeyPatchesUsable && guideResult.isStable) {
-        handleGuidedLearnStep([offscreen]);
-      } else {
-        learnStableStartTime = null;
-      }
-    } else if (autoCaptureEngine.enabled && !isCaptureInProgress) {
-      autoCaptureEngine.update({
-        isKeyPatchesUsable: guideResult.isKeyPatchesUsable,
-        isStable: guideResult.isStable,
-        now: Date.now(),
-      });
-    }
-  }
-
-  setInterval(runLivePatchGuide, 250);
-
-  // Guided Learn Panel Controls
-  const learnPanel = document.querySelector('#guidedLearnPanel');
-  const learnHeading = document.querySelector('#learnGuideHeading');
-  const learnStepTag = document.querySelector('#learnStepTag');
-  const learnPpmSelect = document.querySelector('#learnPpmSelect');
-  const learnCustomInput = document.querySelector('#learnCustomPpmInput');
-  const learnSkipBtn = document.querySelector('#learnSkipBtn');
-  const closeLearnBtn = document.querySelector('#closeLearnPanelBtn');
-  const learnFeedback = document.querySelector('#guidedFeedback');
-  const learnFeedbackText = document.querySelector('#guidedFeedbackText');
-
-  function openGuidedLearn({ calibrateAll = false } = {}) {
-    isLearningActive = true;
-    isCalibrateAll = calibrateAll;
-    calibrateAllIndex = 0;
-    learnStableStartTime = null;
-
-    if (learnPanel) learnPanel.hidden = false;
-    updateGuidedLearnUI();
-    document.querySelector('#cameraFrame')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
-
-  function closeGuidedLearn() {
-    isLearningActive = false;
-    isCalibrateAll = false;
-    learnStableStartTime = null;
-    if (learnPanel) learnPanel.hidden = true;
-    if (learnFeedback) learnFeedback.hidden = true;
-  }
-
-  function getCurrentTargetPpm() {
-    if (isCalibrateAll) {
-      return CALIBRATE_PPM_STEPS[calibrateAllIndex] || 20;
-    }
-    const val = learnPpmSelect?.value;
-    if (val === 'custom') {
-      return Number(learnCustomInput?.value) || 25;
-    }
-    return Number(val) || 20;
-  }
-
-  function updateGuidedLearnUI() {
-    const targetPpm = getCurrentTargetPpm();
-    if (isCalibrateAll) {
-      if (learnStepTag) {
-        learnStepTag.hidden = false;
-        learnStepTag.textContent = `Step ${calibrateAllIndex + 1} of ${CALIBRATE_PPM_STEPS.length}`;
-      }
-      if (learnSkipBtn) learnSkipBtn.style.display = 'inline-flex';
-      if (learnHeading) learnHeading.textContent = `Hold the ${targetPpm} ppm badge in the frame.`;
-      if (learnPpmSelect) learnPpmSelect.value = String(targetPpm);
-    } else {
-      if (learnStepTag) learnStepTag.hidden = true;
-      if (learnSkipBtn) learnSkipBtn.style.display = 'none';
-      if (learnHeading) learnHeading.textContent = `Hold the ${targetPpm} ppm badge in the frame.`;
-    }
-  }
-
-  function handleGuidedLearnStep(frames) {
-    const now = Date.now();
-    if (!learnStableStartTime) {
-      learnStableStartTime = now;
-      return;
-    }
-
-    if (now - learnStableStartTime < 1000) {
-      return;
-    }
-
-    // 1 second stable!
-    learnStableStartTime = null;
-    const targetPpm = getCurrentTargetPpm();
-    const result = executeLearnBadgeWorkflow(targetPpm, frames, { isLearning: true });
-
-    if (result.success) {
-      playFeedbackTone();
-      flashCapturedEffect();
-
-      if (learnFeedback && learnFeedbackText) {
-        learnFeedback.hidden = false;
-        learnFeedbackText.textContent = `✓ Learned ${targetPpm} ppm`;
-      }
-
-      if (isCalibrateAll) {
-        calibrateAllIndex++;
-        if (calibrateAllIndex < CALIBRATE_PPM_STEPS.length) {
-          setTimeout(() => {
-            if (learnFeedback) learnFeedback.hidden = true;
-            updateGuidedLearnUI();
-          }, 1200);
-        } else {
-          setTimeout(() => {
-            if (learnFeedbackText) learnFeedbackText.textContent = '✓ Calibration complete! All levels learned.';
-            setTimeout(() => {
-              closeGuidedLearn();
-            }, 1800);
-          }, 1200);
-        }
-      } else {
-        setTimeout(() => {
-          if (learnFeedback) learnFeedback.hidden = true;
-          closeGuidedLearn();
-        }, 1500);
-      }
-    }
-  }
-
-  document.querySelector('#learnBadgeBtn')?.addEventListener('click', () => {
-    openGuidedLearn({ calibrateAll: false });
-  });
-
-  document.querySelector('#calibrateAllBtn')?.addEventListener('click', () => {
-    openGuidedLearn({ calibrateAll: true });
-  });
-
-  closeLearnBtn?.addEventListener('click', closeGuidedLearn);
-
-  learnPpmSelect?.addEventListener('change', (e) => {
-    if (e.target.value === 'custom') {
-      if (learnCustomInput) learnCustomInput.style.display = 'inline-block';
-    } else {
-      if (learnCustomInput) learnCustomInput.style.display = 'none';
-    }
-    updateGuidedLearnUI();
-  });
-
-  learnCustomInput?.addEventListener('input', updateGuidedLearnUI);
-
-  learnSkipBtn?.addEventListener('click', () => {
-    if (isCalibrateAll) {
-      calibrateAllIndex++;
-      if (calibrateAllIndex < CALIBRATE_PPM_STEPS.length) {
-        updateGuidedLearnUI();
-      } else {
-        closeGuidedLearn();
-      }
     }
   });
 
@@ -1845,17 +1183,51 @@ function initBrowser() {
     }
   });
 
-  // Reset to defaults (no alert)
+  // Learn This Badge
+  const learnBtn = document.querySelector('#learnBadgeBtn');
+  const learnInput = document.querySelector('#learnPpmInput');
+
+  learnBtn?.addEventListener('click', async () => {
+    const val = Number(learnInput?.value);
+    if (isNaN(val) || val <= 0) {
+      alert('Please enter a valid ppm concentration (e.g. 10, 20, 30, 50).');
+      return;
+    }
+
+    let frames = lastCapturedFrames;
+    if (!frames) {
+      frames = await captureFrames(15);
+    }
+
+    if (!frames) {
+      alert('Capture or upload a badge first to learn its color fingerprint.');
+      return;
+    }
+
+    const reading = captureBadgeReading(frames, { rotated: isRotated });
+    if (!reading.valid) {
+      showRefusal(reading.refusalReason);
+      alert(`Cannot learn badge: ${reading.refusalReason}`);
+      return;
+    }
+
+    saveLearnedTemplate(val, reading.s3Hex, reading.s2Hex);
+    alert(`Learned ${val} ppm badge fingerprint: S3 ${reading.s3Hex}, S2 ${reading.s2Hex}`);
+    learnInput.value = '';
+
+    // Re-evaluate with learned templates
+    const rechecked = captureBadgeReading(frames, { rotated: isRotated });
+    if (rechecked.valid) {
+      showResult(rechecked);
+    }
+  });
+
+  // Reset to defaults
   const resetBtn = document.querySelector('#resetLearnedBtn');
   resetBtn?.addEventListener('click', () => {
     showConfirmDialog('Reset all learned badges to defaults? This can\'t be undone.', () => {
       resetLearnedTemplates();
-      const banner = document.querySelector('#repeatTestResults');
-      if (banner) {
-        banner.hidden = false;
-        banner.textContent = '✓ Learned badges reset to factory defaults.';
-        setTimeout(() => { banner.hidden = true; }, 3000);
-      }
+      alert('Learned badges reset to factory defaults.');
     });
   });
 
@@ -1962,11 +1334,6 @@ if (typeof module !== 'undefined' && module.exports) {
     deleteAllRecords,
     computeIncrementalExposure,
     renderRecords,
-    analyzePatchPixels,
-    getLiveGuideTip,
-    evaluateLiveGuide,
-    AutoCaptureEngine,
-    executeLearnBadgeWorkflow,
   };
 }
 

@@ -74,9 +74,6 @@
             <div class="camera-state" id="cameraState">Rear camera active</div>
           </div>
 
-          <!-- Plain single tip line under the viewfinder -->
-          <div class="viewfinder-tip" id="viewfinderTip">Place the badge so the six squares sit on the dots.</div>
-
           <div class="capture-actions">
             <!-- Capture is the ONLY filled button -->
             <button class="capture-button" id="captureButton" type="button">
@@ -85,48 +82,15 @@
             <button class="secondary-button" id="uploadButton" type="button">Upload image</button>
             <input id="imageInput" type="file" accept="image/*" hidden>
             <button class="secondary-button" id="rotateButton" type="button">Rotate grid 90°</button>
-
-            <!-- Auto capture toggle (on by default) -->
-            <label class="auto-capture-toggle" title="Auto capture when steady for 1 second">
-              <input type="checkbox" id="autoCaptureToggle" checked>
-              <span>Auto capture</span>
-            </label>
-          </div>
-
-          <!-- GUIDED LEARN THIS BADGE PANEL -->
-          <div class="guided-learn-panel" id="guidedLearnPanel" hidden>
-            <div class="guided-header">
-              <div>
-                <span class="step-badge" id="learnStepTag" hidden>Step 1 of 4</span>
-                <h3 id="learnGuideHeading">Hold the 10 ppm badge in the frame.</h3>
-              </div>
-              <button class="text-button" id="closeLearnPanelBtn" type="button">Cancel</button>
-            </div>
-            <div class="guided-body">
-              <div class="guided-row">
-                <label for="learnPpmSelect">Target concentration:
-                  <select id="learnPpmSelect">
-                    <option value="10">10 ppm</option>
-                    <option value="20">20 ppm</option>
-                    <option value="40">40 ppm</option>
-                    <option value="50">50 ppm</option>
-                    <option value="custom">Custom...</option>
-                  </select>
-                </label>
-                <input type="number" id="learnCustomPpmInput" placeholder="ppm" min="1" max="200" style="display:none;width:80px;">
-                <button class="secondary-button" id="learnSkipBtn" type="button" style="display:none;">Skip</button>
-              </div>
-              <div class="guided-feedback" id="guidedFeedback" hidden>
-                <span class="check-icon">✓</span> <strong id="guidedFeedbackText">Learned 10 ppm</strong>
-              </div>
-            </div>
           </div>
 
           <!-- Secondary / Utility text buttons -->
           <div class="sub-actions">
             <button class="text-button" id="debugToggleBtn" type="button">Debug</button>
-            <button class="text-button" id="learnBadgeBtn" type="button">Learn this badge</button>
-            <button class="text-button" id="calibrateAllBtn" type="button">Calibrate all</button>
+            <div class="learn-badge-wrap">
+              <input id="learnPpmInput" type="number" placeholder="ppm" min="1" max="100">
+              <button class="text-button" id="learnBadgeBtn" type="button">Learn this badge</button>
+            </div>
             <button class="text-button" id="repeatTestBtn" type="button">Repeat test (5x)</button>
             <button class="text-button destructive" id="resetLearnedBtn" type="button">Reset to defaults</button>
           </div>
@@ -165,7 +129,6 @@
               <div class="match-badge-wrap">
                 <span class="confidence-chip" id="confidenceValue">--</span>
                 <span class="class-chip" id="classValue">Class --</span>
-                <span class="quality-badge yellow" id="qualityNoteBadge" style="display:none;">Low quality</span>
               </div>
             </div>
 
@@ -183,21 +146,16 @@
                 <div class="detail-row"><span>S2 measured / matched:</span><strong id="detailS2Hex">--</strong></div>
                 <div class="detail-row"><span>R3 lighting gains (RGB):</span><strong id="detailGains">--</strong></div>
                 <div class="detail-row"><span>Distances (d1 / d2):</span><strong id="detailDistances">--</strong></div>
-                <div class="detail-row"><span>Patch quality (usable %):</span><strong id="detailPatchUsability">--</strong></div>
               </div>
             </details>
           </div>
         </div>
 
         <div class="retake-content" id="retakeContent" hidden>
-          <div class="friendly-error-card">
-            <span class="friendly-icon">💡</span>
-            <div class="friendly-error-body">
-              <strong id="retakeHeading">Could not read badge</strong>
-              <p id="retakeMessage">Hold the badge steady inside the rectangular guide.</p>
-              <p class="friendly-tip" id="retakeTip"></p>
-              <button class="secondary-button" id="tryAgainBtn" type="button" style="margin-top:10px;">Try again</button>
-            </div>
+          <span class="empty-icon">!</span>
+          <div>
+            <strong>Retake photo</strong>
+            <p id="retakeMessage">Capture quality check failed.</p>
           </div>
         </div>
       </section>

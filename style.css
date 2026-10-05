@@ -250,181 +250,17 @@ h2 {
 .patch-target {
   position: absolute;
   transform: translate(-50%, -50%);
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  border: 1.5px dashed rgba(255, 255, 255, 0.75);
+  border: 1px dashed rgba(255, 255, 255, 0.65);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 9px;
   font-weight: 700;
   color: #ffffff;
-  background: rgba(0, 0, 0, 0.45);
-  transition: background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
-}
-
-/* Live patch guide dot colors */
-.patch-target.dot-green {
-  background: rgba(22, 163, 74, 0.9) !important;
-  border-color: #16a34a !important;
-  border-style: solid !important;
-  box-shadow: 0 0 8px rgba(34, 197, 94, 0.7);
-}
-
-.patch-target.dot-yellow {
-  background: rgba(202, 138, 4, 0.9) !important;
-  border-color: #ca8a04 !important;
-  border-style: solid !important;
-  box-shadow: 0 0 8px rgba(234, 179, 8, 0.7);
-}
-
-.patch-target.dot-red {
-  background: rgba(220, 38, 38, 0.9) !important;
-  border-color: #dc2626 !important;
-  border-style: solid !important;
-  box-shadow: 0 0 8px rgba(239, 68, 68, 0.7);
-}
-
-/* Viewfinder Tip Line */
-.viewfinder-tip {
-  margin-top: 10px;
-  padding: 8px 12px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-  text-align: center;
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* Camera Frame Flash on Auto-Capture */
-.camera-frame.flash-captured::after {
-  content: '✓ Captured';
-  position: absolute;
-  inset: 0;
-  background: rgba(13, 148, 136, 0.55);
-  color: #ffffff;
-  font-weight: 700;
-  font-size: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-  pointer-events: none;
-  animation: flashFade 0.45s ease-out forwards;
-}
-
-@keyframes flashFade {
-  0% { opacity: 1; }
-  100% { opacity: 0; }
-}
-
-/* Auto Capture Toggle */
-.auto-capture-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  cursor: pointer;
-  user-select: none;
-  margin-left: auto;
-  padding: 8px 4px;
-}
-
-.auto-capture-toggle input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent-primary);
-  cursor: pointer;
-}
-
-/* GUIDED LEARN PANEL */
-.guided-learn-panel {
-  margin-top: 16px;
-  padding: 16px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.guided-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-}
-
-.guided-header h3 {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.step-badge {
-  display: inline-block;
-  font-size: 11px;
-  text-transform: uppercase;
-  font-weight: 700;
-  color: var(--accent-primary);
-  background: var(--accent-light);
-  padding: 2px 6px;
-  border-radius: 4px;
-  margin-bottom: 4px;
-}
-
-.guided-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.guided-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.guided-row label {
-  font-size: 13px;
-  color: var(--text-secondary);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.guided-row select,
-.guided-row input {
-  height: 36px;
-  padding: 0 8px;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius);
-  background: var(--bg-base);
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.guided-feedback {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: var(--status-green-bg);
-  border: 1px solid var(--status-green);
-  border-radius: var(--radius);
-  color: var(--status-green);
-  font-size: 13px;
-  font-weight: 600;
+  background: rgba(0, 0, 0, 0.35);
 }
 
 /* Unrotated patch positions */
@@ -756,58 +592,10 @@ h2 {
 }
 
 .retake-content {
-  display: block;
-  margin-top: 8px;
-}
-
-.friendly-error-card {
   display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius);
-  padding: 16px;
-}
-
-.friendly-icon {
-  font-size: 24px;
-  line-height: 1;
-}
-
-.friendly-error-body {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.friendly-error-body strong {
-  font-size: 15px;
-  color: var(--text-primary);
-}
-
-.friendly-error-body p {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.friendly-tip {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.quality-badge {
-  display: inline-flex;
   align-items: center;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 8px;
-  border-radius: var(--radius-pill);
-}
-
-.quality-badge.yellow {
-  background: var(--status-yellow-bg);
-  color: var(--status-yellow);
+  gap: 12px;
+  color: var(--status-red);
 }
 
 /* RECORDS SECTION & TABLE */
