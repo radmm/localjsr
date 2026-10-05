@@ -204,6 +204,12 @@ h2 {
   color: var(--text-primary);
 }
 
+h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 .lede {
   color: var(--text-secondary);
   font-size: var(--font-size-base);
@@ -231,7 +237,8 @@ h2 {
 .result-panel,
 .compare-panel,
 .log-section,
-.demo-color-panel {
+.demo-color-panel,
+.brown-scale-card {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
@@ -244,7 +251,8 @@ h2 {
   .result-panel,
   .compare-panel,
   .log-section,
-  .demo-color-panel {
+  .demo-color-panel,
+  .brown-scale-card {
     padding: 24px;
   }
 }
@@ -1205,6 +1213,7 @@ footer {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .nav-pill-btn {
@@ -1223,6 +1232,7 @@ footer {
   cursor: pointer;
   font-size: var(--font-size-sm);
   font-weight: 500;
+  transition: color 0.15s ease;
 }
 
 .nav-pill-btn svg {
@@ -1233,8 +1243,13 @@ footer {
   fill: none;
 }
 
+.nav-pill-btn:hover {
+  color: var(--text-primary);
+}
+
 .nav-pill-btn.active {
   color: var(--accent-primary);
+  font-weight: 600;
 }
 
 .sr-only {
