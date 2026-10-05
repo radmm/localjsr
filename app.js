@@ -2137,7 +2137,11 @@ function initBrowser() {
   }
 
   async function captureBrownScale20Frames() {
-    const video = document.querySelector('#cameraFeed');
+    const bsVideo = document.querySelector('#bsCameraFeed');
+    const mainVideo = document.querySelector('#cameraFeed');
+    const video = (bsVideo && !bsVideo.paused && bsVideo.readyState >= 2 && bsVideo.videoWidth > 0)
+      ? bsVideo
+      : mainVideo;
     const frames = [];
     const isVideoActive = video && !video.paused && video.readyState >= 2 && video.videoWidth > 0;
 
@@ -2336,13 +2340,38 @@ function initBrowser() {
   renderBrownScaleCalibration();
   renderBrownScaleHistory();
 
+  document.querySelector('#navBrownScale')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    const workspace = document.querySelector('.workspace');
+    const brownScalePage = document.querySelector('#brownScalePage');
+    if (workspace) workspace.style.display = 'none';
+    if (brownScalePage) {
+      brownScalePage.style.display = 'block';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const bsVideo = document.querySelector('#bsCameraFeed');
+      const bsPlaceholder = document.querySelector('#bsCameraPlaceholder');
+      if (bsVideo && cameraStream) {
+        bsVideo.srcObject = cameraStream;
+        bsVideo.style.display = 'block';
+        if (bsPlaceholder) bsPlaceholder.style.display = 'none';
+        try { bsVideo.play(); } catch (err) {}
+      }
+    }
+    document.querySelectorAll('.nav-pill-btn').forEach((b) => b.classList.remove('active'));
+    document.querySelector('#navBrownScale')?.classList.add('active');
+  });
+
   window.addEventListener('beforeunload', () => cameraStream?.getTracks().forEach((track) => track.stop()));
   renderRecords();
   startCamera();
 }
 
 if (typeof document !== 'undefined') {
-  initBrowser();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initBrowser);
+  } else {
+    initBrowser();
+  }
 }
 
 if (typeof module !== 'undefined') {

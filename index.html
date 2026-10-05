@@ -356,6 +356,7 @@
     <!-- DEDICATED PAGE: BROWN SCALE READER -->
     <section class="brown-scale-page" id="brownScalePage" style="display:none;padding:16px 20px 80px;max-width:1120px;margin:0 auto;">
       <div class="page-heading">
+        <button class="secondary-button" id="bsBackToScanBtn" type="button" style="margin-bottom:12px;font-size:12px;height:32px;padding:0 12px;cursor:pointer;">&larr; Back to field scan</button>
         <p class="eyebrow">Dedicated module / Brown scale</p>
         <h1>Brown scale reader</h1>
         <p class="lede">Pristine reference (0 ppm, #C4C3BF) vs sample patch. dL differential colorimetry with on-device calibration.</p>
@@ -633,7 +634,33 @@
         deferredInstallPrompt = null;
       });
     }
+  </script>
 
+  <!-- Bottom Navigation -->
+  <nav class="floating-bottom-nav" id="bottomNav" aria-label="Quick navigation">
+    <button class="nav-pill-btn active" id="navScan" type="button" aria-label="Scan badge">
+      <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+      <span>Scan</span>
+    </button>
+    <button class="nav-pill-btn" id="navBrownScale" type="button" aria-label="Brown scale">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg>
+      <span>Brown scale</span>
+    </button>
+    <button class="nav-pill-btn" id="navResults" type="button" aria-label="View dose results">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+      <span>Results</span>
+    </button>
+    <button class="nav-pill-btn" id="navRecords" type="button" aria-label="View saved records">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+      <span>Records</span>
+    </button>
+    <button class="nav-pill-btn" id="navSession" type="button" aria-label="Configure session">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      <span>Session</span>
+    </button>
+  </nav>
+
+  <script>
     // Bottom Navigation Tab Switching
     const navItems = [
       { btnId: 'navScan', targetId: 'captureSection', isPage: false },
@@ -643,33 +670,61 @@
       { btnId: 'navSession', targetId: 'sessionSection', isPage: false }
     ];
 
-    navItems.forEach(item => {
-      const btn = document.getElementById(item.btnId);
-      if (btn) {
-        btn.addEventListener('click', () => {
-          navItems.forEach(n => document.getElementById(n.btnId)?.classList.remove('active'));
-          btn.classList.add('active');
+    function activateTab(item) {
+      navItems.forEach(n => document.getElementById(n.btnId)?.classList.remove('active'));
+      document.getElementById(item.btnId)?.classList.add('active');
 
-          const workspace = document.querySelector('.workspace');
-          const brownScalePage = document.getElementById('brownScalePage');
+      const workspace = document.querySelector('.workspace');
+      const brownScalePage = document.getElementById('brownScalePage');
 
-          if (item.isPage) {
-            if (workspace) workspace.style.display = 'none';
-            if (brownScalePage) {
-              brownScalePage.style.display = 'block';
-              brownScalePage.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
-          } else {
-            if (workspace) workspace.style.display = '';
-            if (brownScalePage) brownScalePage.style.display = 'none';
-            const target = document.getElementById(item.targetId);
-            if (target) {
-              target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
+      if (item.isPage) {
+        if (workspace) workspace.style.display = 'none';
+        if (brownScalePage) {
+          brownScalePage.style.display = 'block';
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          // Mirror stream to brown scale video if active
+          const mainVideo = document.querySelector('#cameraFeed');
+          const bsVideo = document.querySelector('#bsCameraFeed');
+          const bsPlaceholder = document.querySelector('#bsCameraPlaceholder');
+          if (bsVideo && mainVideo?.srcObject) {
+            bsVideo.srcObject = mainVideo.srcObject;
+            bsVideo.style.display = 'block';
+            if (bsPlaceholder) bsPlaceholder.style.display = 'none';
+            try { bsVideo.play(); } catch (e) {}
           }
-        });
+        }
+      } else {
+        if (workspace) workspace.style.display = '';
+        if (brownScalePage) brownScalePage.style.display = 'none';
+        const target = document.getElementById(item.targetId);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
       }
-    });
+    }
+
+    function setupNavigation() {
+      navItems.forEach(item => {
+        const btn = document.getElementById(item.btnId);
+        if (btn) {
+          btn.onclick = (e) => {
+            e.preventDefault();
+            activateTab(item);
+          };
+        }
+      });
+
+      document.getElementById('bsBackToScanBtn')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        activateTab(navItems[0]);
+      });
+    }
+
+    // Run setup immediately and on DOMContentLoaded
+    setupNavigation();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', setupNavigation);
+    }
 
     // Auto-update active tab on scroll
     if ('IntersectionObserver' in window) {
@@ -715,29 +770,5 @@
       applyThemeIcon(active);
     });
   </script>
-
-  <!-- Bottom Navigation -->
-  <nav class="floating-bottom-nav" id="bottomNav" aria-label="Quick navigation">
-    <button class="nav-pill-btn active" id="navScan" type="button" aria-label="Scan badge">
-      <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
-      <span>Scan</span>
-    </button>
-    <button class="nav-pill-btn" id="navBrownScale" type="button" aria-label="Brown scale">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg>
-      <span>Brown scale</span>
-    </button>
-    <button class="nav-pill-btn" id="navResults" type="button" aria-label="View dose results">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
-      <span>Results</span>
-    </button>
-    <button class="nav-pill-btn" id="navRecords" type="button" aria-label="View saved records">
-      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-      <span>Records</span>
-    </button>
-    <button class="nav-pill-btn" id="navSession" type="button" aria-label="Configure session">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-      <span>Session</span>
-    </button>
-  </nav>
 </body>
 </html>
