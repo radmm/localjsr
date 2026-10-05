@@ -372,6 +372,11 @@ h2 {
   color: var(--status-red);
 }
 
+.text-button.active {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+}
+
 .sub-actions {
   display: flex;
   align-items: center;
@@ -380,6 +385,69 @@ h2 {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--border-subtle);
+}
+
+/* SCAN MODE CYCLE COUNTER (bottom) */
+.scan-counter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: rgba(168, 85, 247, 0.1);
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.scan-counter-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.scan-counter-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #a855f7;
+  color: #ffffff;
+}
+
+.scan-counter-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #d8b4fe;
+}
+
+.scan-chip {
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(168, 85, 247, 0.2);
+  color: #d8b4fe;
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  display: inline-flex;
+  align-items: center;
+}
+
+.scan-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  background: rgba(168, 85, 247, 0.2);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  margin-left: 6px;
+  display: inline-block;
 }
 
 /* DEDICATED ADD PPM / CALIBRATION CARD */

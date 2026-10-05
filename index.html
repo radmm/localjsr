@@ -4,7 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0d9488">
-  <meta name="description" content="H2S exposure dosimeter badge reader with on-device colorimetry, lighting cancellation, and offline tracking.">
+  <meta name="description" content="On-device field capture, ArUco alignment, and drift-compensated analysis for H2S exposure badges.">
+  <meta property="og:title" content="H2S Badge Reader">
+  <meta property="og:description" content="On-device field capture, ArUco alignment, and drift-compensated analysis for H2S exposure badges.">
   <title>H2S Badge Reader</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -119,12 +121,22 @@
 
           <!-- Secondary / Utility text buttons -->
           <div class="sub-actions">
+            <button class="text-button" id="scanToggleBtn" type="button" aria-pressed="false">Scan mode: OFF</button>
             <button class="text-button" id="debugToggleBtn" type="button">Debug ROI</button>
             <button class="text-button" id="repeatTestBtn" type="button">Repeat test (5x)</button>
             <button class="text-button destructive" id="resetLearnedBtn" type="button">Reset templates to defaults</button>
           </div>
 
           <div id="repeatTestResults" class="repeat-test-banner" hidden></div>
+
+          <!-- Scan Mode Cycle Counter Bar (bottom) -->
+          <div class="scan-counter-bar" id="scanCounterBar" hidden style="display:none;">
+            <div class="scan-counter-info">
+              <span class="scan-counter-badge">Scan mode</span>
+              <span class="scan-counter-text" id="scanCounterText">Cycle 1, Capture 1 of 4</span>
+            </div>
+            <button class="text-button" id="resetScanCounterBtn" type="button">Reset counter</button>
+          </div>
         </div>
 
         <!-- SESSION -->
@@ -158,6 +170,7 @@
               <div class="match-badge-wrap">
                 <span class="confidence-chip" id="confidenceValue">--</span>
                 <span class="class-chip" id="classValue">Class --</span>
+                <span class="scan-chip" id="scanReadChip" hidden style="display:none;">scan read</span>
               </div>
             </div>
 

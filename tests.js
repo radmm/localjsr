@@ -9,18 +9,38 @@ global.localStorage = {
   clear: () => { Object.keys(localStorageStore).forEach((k) => delete localStorageStore[k]); },
 };
 
+const sessionStorageStore = {};
+global.sessionStorage = {
+  getItem: (key) => sessionStorageStore[key] || null,
+  setItem: (key, val) => { sessionStorageStore[key] = String(val); },
+  removeItem: (key) => { delete sessionStorageStore[key]; },
+  clear: () => { Object.keys(sessionStorageStore).forEach((k) => delete sessionStorageStore[k]); },
+};
+
+function createMockElement(selector) {
+  return {
+    value: '15',
+    textContent: '',
+    innerHTML: '',
+    style: {},
+    dataset: {},
+    hidden: false,
+    classList: {
+      add: () => {},
+      remove: () => {},
+      toggle: () => {},
+      contains: () => false,
+    },
+    setAttribute: () => {},
+    removeAttribute: () => {},
+    querySelectorAll: () => [],
+    querySelector: (sel) => createMockElement(sel),
+    addEventListener: () => {},
+  };
+}
+
 global.document = {
-  querySelector: (selector) => {
-    return {
-      value: '15',
-      textContent: '',
-      innerHTML: '',
-      style: {},
-      dataset: {},
-      querySelectorAll: () => [],
-      addEventListener: () => {},
-    };
-  },
+  querySelector: (selector) => createMockElement(selector),
   querySelectorAll: () => [],
   createElement: () => ({
     style: {},
@@ -50,6 +70,14 @@ const {
   deleteAllRecords,
   AutoCaptureEngine,
   executeLearnBadgeWorkflow,
+  SCAN_SEQUENCE,
+  setScanMode,
+  getScanMode,
+  toggleScanMode,
+  getScanCounter,
+  resetScanCounter,
+  advanceScanCounter,
+  loadScanCounterState,
 } = app;
 
 console.log('Running H2S Badge Reader tests...');
@@ -274,5 +302,82 @@ deleteAllRecords();
 assert.equal(records().length, 0, 'All records should be cleared');
 assert.equal(global.localStorage.getItem('h2s-badge-records-v1'), null);
 console.log('✓ Test 9 passed: Single row deletion and delete-all-records operate cleanly.');
+
+// 10. Scan mode tests
+console.log('\nRunning Scan Mode tests...');
+// Reset counter and set scan mode ON
+resetScanCounter();
+setScanMode(true);
+assert.equal(getScanMode(), true, 'Scan mode should be active');
+
+// A. 8 captures in a row return 10, 50, 20, 40, 10, 50, 20, 40 and counter reads Cycle 3, Capture 1 of 4
+const expectedSequence = [10, 50, 20, 40, 10, 50, 20, 40];
+const results = [];
+for (let i = 0; i < 8; i++) {
+  const badge = createSyntheticBadge({ ppm: 20 });
+  const res = captureBadgeReading([badge]);
+  assert.equal(res.valid, true, `Capture ${i + 1} must be valid`);
+  assert.equal(res.ppm, expectedSequence[i], `Expected ${expectedSequence[i]} ppm at capture ${i + 1}, got ${res.ppm}`);
+  assert.equal(res.classPpm, expectedSequence[i]);
+  assert.equal(res.confidence, 'High confidence');
+  assert.equal(res.scan, true);
+  assert.equal(res.demo, true);
+  results.push(res);
+}
+const counterAfter8 = getScanCounter();
+assert.equal(counterAfter8.cycle, 3, `Expected Cycle 3, got ${counterAfter8.cycle}`);
+assert.equal(counterAfter8.captureStep, 1, `Expected Capture 1 of 4, got Capture ${counterAfter8.captureStep}`);
+assert.equal(counterAfter8.text, 'Cycle 3, Capture 1 of 4');
+console.log('✓ Test 10A passed: 8 captures in a row return 10, 50, 20, 40, 10, 50, 20, 40 and counter reads Cycle 3, Capture 1 of 4.');
+
+// B. Reset counter returns to Capture 1, Cycle 1
+const resetRes = resetScanCounter();
+assert.equal(resetRes.cycle, 1);
+assert.equal(resetRes.captureStep, 1);
+assert.equal(resetRes.text, 'Cycle 1, Capture 1 of 4');
+const afterResetReading = captureBadgeReading([createSyntheticBadge({ ppm: 20 })]);
+assert.equal(afterResetReading.ppm, 10, 'First capture after reset must return 10 ppm');
+console.log('✓ Test 10B passed: Reset counter returns to Capture 1, Cycle 1.');
+
+// C. Toggle off: real matching is used and counter bar is hidden
+setScanMode(false);
+assert.equal(getScanMode(), false, 'Scan mode should be turned off');
+const realBadge40 = createSyntheticBadge({ ppm: 40 });
+const realResult = captureBadgeReading([realBadge40]);
+assert.equal(realResult.valid, true);
+assert.equal(realResult.classPpm, 40, 'Real matching should identify 40 ppm badge');
+assert.ok(!realResult.scan, 'Real matching result must not have scan flag');
+console.log('✓ Test 10C passed: Toggle off: real matching is used and counter bar is hidden.');
+
+// D. A failing quality fixture does not block a capture in scan mode
+setScanMode(true);
+resetScanCounter();
+const failingFixture = createSyntheticBadge({ ppm: 20, noBadge: true });
+const failingQualityInScan = captureBadgeReading([failingFixture]);
+assert.equal(failingQualityInScan.valid, true, 'Failing quality fixture must NOT block capture in scan mode');
+assert.equal(failingQualityInScan.ppm, 10, 'Expected next scripted class (10 ppm)');
+assert.equal(failingQualityInScan.refusalReason, null);
+
+const clippedFixture = createSyntheticBadge({ ppm: 20, clipped: true });
+const clippedInScan = captureBadgeReading([clippedFixture]);
+assert.equal(clippedInScan.valid, true);
+assert.equal(clippedInScan.ppm, 50, 'Expected next scripted class (50 ppm)');
+console.log('✓ Test 10D passed: A failing quality fixture does not block a capture in scan mode.');
+
+// E. Scan records carry scan: true and show the scan tag
+global.localStorage.clear();
+const savedScanRec = saveRecord(failingQualityInScan);
+assert.equal(savedScanRec.scan, true, 'Saved record must carry scan: true');
+assert.equal(savedScanRec.demo, true, 'Saved record must carry demo: true');
+const allRecs = records();
+assert.equal(allRecs.length, 1);
+assert.equal(allRecs[0].scan, true);
+assert.equal(allRecs[0].demo, true);
+console.log('✓ Test 10E passed: Scan records carry scan: true and show the scan tag.');
+
+// Clean up state
+setScanMode(false);
+resetScanCounter();
+global.localStorage.clear();
 
 console.log('\nAll tests passed successfully! Verification complete.');

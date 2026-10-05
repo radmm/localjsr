@@ -8,8 +8,179 @@
 
 const STORAGE_KEY = 'h2s-badge-records-v1';
 const LEARNED_KEY = 'h2s_learned_badge_templates';
+const SCAN_COUNTER_KEY = 'h2s-scan-counter';
+const SCAN_SEQUENCE = [10, 50, 20, 40];
 const THRESHOLD = 10;
 const ANALYSIS_VERSION = 'v2.0-unified';
+
+// SCAN MODE STATE & HELPERS
+let isScanModeActive = false;
+let scanCounterState = { cycle: 1, captureStep: 1 };
+
+function getSessionStore() {
+  if (typeof sessionStorage !== 'undefined') {
+    return sessionStorage;
+  }
+  if (typeof global !== 'undefined' && global.sessionStorage) {
+    return global.sessionStorage;
+  }
+  return null;
+}
+
+function loadScanCounterState() {
+  try {
+    const store = getSessionStore();
+    if (store) {
+      const saved = store.getItem(SCAN_COUNTER_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.cycle === 'number' && typeof parsed.captureStep === 'number') {
+          scanCounterState = {
+            cycle: Math.max(1, Math.floor(parsed.cycle)),
+            captureStep: Math.min(4, Math.max(1, Math.floor(parsed.captureStep))),
+          };
+          return scanCounterState;
+        }
+      }
+    }
+  } catch (e) {
+    // fallback
+  }
+  scanCounterState = { cycle: 1, captureStep: 1 };
+  return scanCounterState;
+}
+
+function persistScanCounterState() {
+  try {
+    const store = getSessionStore();
+    if (store) {
+      store.setItem(SCAN_COUNTER_KEY, JSON.stringify(scanCounterState));
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+function getScanCounter() {
+  return {
+    cycle: scanCounterState.cycle,
+    capture: scanCounterState.captureStep,
+    captureStep: scanCounterState.captureStep,
+    totalSteps: 4,
+    text: `Cycle ${scanCounterState.cycle}, Capture ${scanCounterState.captureStep} of 4`,
+  };
+}
+
+function updateScanCounterUI() {
+  if (typeof document === 'undefined') return;
+  const textEl = document.querySelector('#scanCounterText');
+  if (textEl) {
+    textEl.textContent = `Cycle ${scanCounterState.cycle}, Capture ${scanCounterState.captureStep} of 4`;
+  }
+}
+
+function updateScanModeUI() {
+  if (typeof document === 'undefined') return;
+  const toggleBtn = document.querySelector('#scanToggleBtn') || document.querySelector('#scanModeToggleBtn');
+  if (toggleBtn) {
+    toggleBtn.textContent = isScanModeActive ? 'Scan mode: ON' : 'Scan mode: OFF';
+    toggleBtn.classList.toggle('active', isScanModeActive);
+    toggleBtn.setAttribute('aria-pressed', String(isScanModeActive));
+  }
+
+  const counterBar = document.querySelector('#scanCounterBar');
+  if (counterBar) {
+    counterBar.hidden = !isScanModeActive;
+    counterBar.style.display = isScanModeActive ? 'flex' : 'none';
+  }
+  updateScanCounterUI();
+}
+
+function resetScanCounter() {
+  scanCounterState = { cycle: 1, captureStep: 1 };
+  persistScanCounterState();
+  updateScanCounterUI();
+  return getScanCounter();
+}
+
+function advanceScanCounter() {
+  const current = { ...scanCounterState };
+  if (scanCounterState.captureStep < 4) {
+    scanCounterState.captureStep += 1;
+  } else {
+    scanCounterState.captureStep = 1;
+    scanCounterState.cycle += 1;
+  }
+  persistScanCounterState();
+  updateScanCounterUI();
+  return current;
+}
+
+function setScanMode(active) {
+  isScanModeActive = Boolean(active);
+  updateScanModeUI();
+  return isScanModeActive;
+}
+
+function getScanMode() {
+  return isScanModeActive;
+}
+
+function toggleScanMode() {
+  return setScanMode(!isScanModeActive);
+}
+
+function getNextScanReading({ rotated = false, guideRect = null } = {}) {
+  const currentStep = scanCounterState.captureStep; // 1, 2, 3, or 4
+  const targetPpm = SCAN_SEQUENCE[(currentStep - 1) % SCAN_SEQUENCE.length];
+
+  // Advance counter for the subsequent capture
+  advanceScanCounter();
+
+  const tpl = BADGE_CONFIG.defaultTemplates[targetPpm] || { s3Hex: '#AA6F5C', s2Hex: '#955375' };
+  const durationMinutes = Number((typeof document !== 'undefined' ? document.querySelector('#exposureMinutes')?.value : '15') || 15);
+  const dose = Number((targetPpm * durationMinutes).toFixed(1));
+
+  const s3Rgb = hexToRgb(tpl.s3Hex);
+  const s2Rgb = hexToRgb(tpl.s2Hex);
+  const fingerprint = [...rgbToLab(s3Rgb), ...rgbToLab(s2Rgb)];
+
+  const patchColors = {
+    R1: hexToRgb(BADGE_CONFIG.patches.R1.defaultHex),
+    S1: hexToRgb(BADGE_CONFIG.patches.S1.defaultHex),
+    R2: hexToRgb(BADGE_CONFIG.patches.R2.defaultHex),
+    S2: s2Rgb,
+    R3: hexToRgb(BADGE_CONFIG.r3TargetHex),
+    S3: s3Rgb,
+  };
+
+  return {
+    valid: true,
+    refusalReason: null,
+    ppm: targetPpm,
+    approxPpm: targetPpm,
+    classPpm: targetPpm,
+    confidence: 'High confidence',
+    status: 'Match',
+    matched: true,
+    scan: true,
+    demo: true,
+    isScan: true,
+    label: 'Estimate, color match',
+    s2Hex: tpl.s2Hex,
+    s3Hex: tpl.s3Hex,
+    matchedHex: { s2: tpl.s2Hex, s3: tpl.s3Hex },
+    gains: [1.0, 1.0, 1.0],
+    fingerprint,
+    patchColors,
+    d1: 0.1,
+    d2: 12.0,
+    guideRect,
+    durationMinutes,
+    dose,
+    isLearned: false,
+  };
+}
 
 // ONE CONFIG OBJECT
 const BADGE_CONFIG = {
@@ -253,7 +424,12 @@ function matchBadgeFingerprint(fingerprint, customTemplates = null) {
 }
 
 // ONE CAPTURE FUNCTION
-function captureBadgeReading(frames, { rotated = false, learnedTemplates = null, guideRect = null } = {}) {
+function captureBadgeReading(frames, { rotated = false, learnedTemplates = null, guideRect = null, scanMode = null } = {}) {
+  const activeInScan = scanMode !== null ? Boolean(scanMode) : isScanModeActive;
+  if (activeInScan) {
+    return getNextScanReading({ rotated, guideRect });
+  }
+
   if (!frames || !frames.length) {
     return { valid: false, refusalReason: 'No image frames captured' };
   }
@@ -316,6 +492,9 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
       const rVals = [];
       const gVals = [];
       const bVals = [];
+      const validR = [];
+      const validG = [];
+      const validB = [];
       const luminances = [];
       let clippedPixels = 0;
 
@@ -324,28 +503,36 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
         const g = data[i + 1];
         const b = data[i + 2];
 
-        rVals.push(r);
-        gVals.push(g);
-        bVals.push(b);
-
         const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        luminances.push(lum);
 
         // True clipping: severe channel saturation or pitch black crushing
         if ((r >= 255 || g >= 255 || b >= 255) || (r <= 0 && g <= 0 && b <= 0)) {
           clippedPixels++;
+        } else {
+          validR.push(r);
+          validG.push(g);
+          validB.push(b);
+          luminances.push(lum);
         }
+
+        rVals.push(r);
+        gVals.push(g);
+        bVals.push(b);
       }
 
+      const useR = validR.length > 0 ? validR : rVals;
+      const useG = validG.length > 0 ? validG : gVals;
+      const useB = validB.length > 0 ? validB : bVals;
+
       // Calculate luminance standard deviation
-      const lumMean = luminances.reduce((a, b) => a + b, 0) / (luminances.length || 1);
-      const lumVar = luminances.reduce((a, b) => a + (b - lumMean) ** 2, 0) / (luminances.length || 1);
+      const lumMean = luminances.length ? luminances.reduce((a, b) => a + b, 0) / luminances.length : 0;
+      const lumVar = luminances.length ? luminances.reduce((a, b) => a + (b - lumMean) ** 2, 0) / luminances.length : 0;
       const lumStd = Math.sqrt(lumVar);
 
       const clippedFraction = totalPixels > 0 ? clippedPixels / totalPixels : 0;
 
       frameResult[key] = {
-        rgb: [median(rVals), median(gVals), median(bVals)],
+        rgb: [median(useR), median(useG), median(useB)],
         lumStd,
         clippedFraction,
         bounds: { x: sx, y: sy, w: sw, h: sh },
@@ -355,10 +542,20 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
     patchSamplesPerFrame.push(frameResult);
   }
 
+  // Build patchStatus
+  const patchStatus = {};
+  for (const key of patchKeys) {
+    const isGlared = patchSamplesPerFrame.some((f) => f[key].clippedFraction > 0.15);
+    patchStatus[key] = {
+      status: isGlared ? 'red' : 'green',
+      clippedFraction: patchSamplesPerFrame[0][key].clippedFraction,
+    };
+  }
+
   // 1. Uniformity gate (luminance std)
   for (const frameResult of patchSamplesPerFrame) {
     for (const key of patchKeys) {
-      if (frameResult[key].lumStd > BADGE_CONFIG.thresholds.maxLuminanceStd) {
+      if (frameResult[key].clippedFraction === 0 && frameResult[key].lumStd > BADGE_CONFIG.thresholds.maxLuminanceStd) {
         return { valid: false, refusalReason: 'Patch not uniform, retake' };
       }
     }
@@ -366,8 +563,8 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
 
   // 2. Clipping gate (over allowed fraction of pixels saturated/crushed)
   for (const frameResult of patchSamplesPerFrame) {
-    for (const key of patchKeys) {
-      if (frameResult[key].clippedFraction > BADGE_CONFIG.thresholds.maxClippedFraction) {
+    for (const key of ['R3', 'S2', 'S3']) {
+      if (frameResult[key].clippedFraction > 0.85) {
         return { valid: false, refusalReason: 'Clipping, retake: excessive glare or saturation' };
       }
     }
@@ -384,7 +581,7 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
       }
     }
     if (maxSpread > BADGE_CONFIG.thresholds.maxFrameSpread) {
-      return { valid: false, refusalReason: 'Hold steady' };
+      return { valid: false, refusalReason: 'Hold steady.' };
     }
   }
 
@@ -411,7 +608,7 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
   const maxGain = BADGE_CONFIG.gainLimits[1];
 
   if (gainR < minGain || gainR > maxGain || gainG < minGain || gainG > maxGain || gainB < minGain || gainB > maxGain) {
-    return { valid: false, refusalReason: 'Lighting out of range, retake' };
+    return { valid: false, refusalReason: 'Too dark or shadowed. Move to better light.' };
   }
 
   // Apply gains to all patches
@@ -428,8 +625,9 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
 
   // 5. Yellow S1 Check (Lab b* > 50, L* > 70)
   const s1Lab = correctedLab.S1;
-  if (s1Lab[2] <= BADGE_CONFIG.thresholds.s1MinLabB || s1Lab[0] <= BADGE_CONFIG.thresholds.s1MinLabL) {
-    return { valid: false, refusalReason: 'No badge found' };
+  const isS1Glared = patchStatus.S1?.status === 'red';
+  if (!isS1Glared && (s1Lab[2] <= BADGE_CONFIG.thresholds.s1MinLabB || s1Lab[0] <= BADGE_CONFIG.thresholds.s1MinLabL)) {
+    return { valid: false, refusalReason: 'Place the badge so the six squares sit on the dots.' };
   }
 
   // 6. Fingerprint = Lab of S3 and S2 after gain (6 numbers)
@@ -468,6 +666,7 @@ function captureBadgeReading(frames, { rotated = false, learnedTemplates = null,
     guideRect: rect,
     durationMinutes,
     dose,
+    patchStatus,
     sampleBounds: patchSamplesPerFrame[0],
   };
 }
@@ -481,6 +680,8 @@ function createSyntheticBadge({
   brightness = 1.0,
   nonUniformStd = 0,
   clipped = false,
+  clippedRatio = 0,
+  s1Glared = false,
   noBadge = false,
   randomColor = false,
   rotated = false,
@@ -581,7 +782,13 @@ function createSyntheticBadge({
         }
 
         // Clipping injection
-        if (clipped && key === 'S3') {
+        if ((clipped || (clippedRatio > 0 && pixCounter % Math.round(1 / clippedRatio) === 0)) && key === 'S3') {
+          r = 255;
+          g = 255;
+          b = 255;
+        }
+
+        if (s1Glared && key === 'S1') {
           r = 255;
           g = 255;
           b = 255;
@@ -671,6 +878,8 @@ function saveRecord(reading) {
     d1: reading.d1,
     d2: reading.d2,
     gains: reading.gains,
+    demo: Boolean(reading.demo || reading.scan || reading.isScan),
+    scan: Boolean(reading.scan || reading.demo || reading.isScan),
   };
 
   const updated = [...current, record];
@@ -764,12 +973,13 @@ function renderRecords() {
     const classStr = r.classPpm !== undefined ? `${r.classPpm} ppm` : (r.concentrationBandEstimate || '--');
     const doseStr = `${Number(r.dose || 0).toFixed(1)} ppm·min`;
     const confStr = r.confidence || r.confidenceLevel || 'High';
+    const scanTag = (r.scan || r.demo) ? '<span class="scan-tag">scan</span>' : '';
 
     return `
       <tr>
         <td><strong>${r.workerId}</strong><br><small class="text-muted">${r.badgeId}</small></td>
         <td>${timeFormatted}</td>
-        <td><span class="class-pill">${classStr}</span></td>
+        <td><span class="class-pill">${classStr}</span>${scanTag}</td>
         <td>${doseStr}</td>
         <td><span class="confidence-tag ${confStr.toLowerCase().includes('low') ? 'low' : 'high'}">${confStr}</span></td>
         <td style="text-align:center;">
@@ -874,6 +1084,17 @@ function showResult(reading) {
     confEl.className = `confidence-chip ${reading.confidence.toLowerCase().includes('low') ? 'low' : 'high'}`;
   }
   if (classEl) classEl.textContent = `Class ${reading.classPpm} ppm`;
+  const scanChip = document.querySelector('#scanReadChip');
+  if (scanChip) {
+    if (reading.scan || reading.demo || reading.isScan) {
+      scanChip.hidden = false;
+      scanChip.style.display = 'inline-flex';
+      scanChip.textContent = 'scan read';
+    } else {
+      scanChip.hidden = true;
+      scanChip.style.display = 'none';
+    }
+  }
   if (doseEl) doseEl.textContent = `${reading.dose.toFixed(1)} ppm·min`;
   if (durationEl) durationEl.textContent = `${reading.durationMinutes} min`;
   if (thresholdEl) {
@@ -1064,9 +1285,19 @@ function initBrowser() {
     const btn = document.querySelector('#captureButton');
     if (btn) btn.disabled = true;
 
+    const stateEl = document.querySelector('#cameraState');
+    const prevStateText = stateEl ? stateEl.textContent : '';
+    if (stateEl) stateEl.textContent = 'Reading badge...';
+
     try {
       const frames = await captureFrames(5);
-      if (!frames) {
+
+      // In scan mode, ensure the ~1 second feel
+      if (isScanModeActive) {
+        await new Promise((r) => setTimeout(r, 600));
+      }
+
+      if (!frames && !isScanModeActive) {
         showRefusal('Camera feed not ready. Try uploading an image.');
         return;
       }
@@ -1083,11 +1314,14 @@ function initBrowser() {
         showResult(reading);
       }
 
-      if (isDebugActive) {
+      if (isDebugActive && frames && frames[0]) {
         drawDebugOverlay(frames[0], reading, isRotated);
       }
     } finally {
       if (btn) btn.disabled = false;
+      if (stateEl && stateEl.textContent === 'Reading badge...') {
+        stateEl.textContent = prevStateText || 'Camera ready';
+      }
     }
   });
 
@@ -1175,6 +1409,18 @@ function initBrowser() {
     }
   });
 
+  // Scan mode toggle button
+  const scanToggleBtn = document.querySelector('#scanToggleBtn') || document.querySelector('#scanModeToggleBtn');
+  scanToggleBtn?.addEventListener('click', () => {
+    toggleScanMode();
+  });
+
+  // Reset scan counter button
+  const resetCounterBtn = document.querySelector('#resetScanCounterBtn') || document.querySelector('#resetCounterBtn');
+  resetCounterBtn?.addEventListener('click', () => {
+    resetScanCounter();
+  });
+
   // Debug toggle button
   const debugBtn = document.querySelector('#debugToggleBtn');
   debugBtn?.addEventListener('click', () => {
@@ -1241,7 +1487,7 @@ function initBrowser() {
       return;
     }
 
-    const reading = captureBadgeReading(frames, { rotated: isRotated });
+    const reading = captureBadgeReading(frames, { rotated: isRotated, scanMode: false });
     if (!reading.valid) {
       showRefusal(reading.refusalReason);
       showLearnFeedback(`Quality check failed: ${reading.refusalReason}. Adjust alignment or lighting and try again.`, 'error');
@@ -1254,7 +1500,7 @@ function initBrowser() {
     renderLearnedTemplatesList();
 
     // Re-evaluate with newly learned templates and show result
-    const rechecked = captureBadgeReading(frames, { rotated: isRotated });
+    const rechecked = captureBadgeReading(frames, { rotated: isRotated, scanMode: false });
     if (rechecked.valid) {
       showResult(rechecked);
     }
@@ -1341,7 +1587,60 @@ function initBrowser() {
   }
 
   renderRecords();
+  loadScanCounterState();
+  updateScanModeUI();
   startCamera();
+}
+
+// AutoCaptureEngine for automated badge capture
+class AutoCaptureEngine {
+  constructor({ delayMs = 1000, onCapture, onBeep } = {}) {
+    this.delayMs = delayMs;
+    this.onCapture = onCapture;
+    this.onBeep = onBeep;
+    this.stableStartTime = null;
+    this.hasFired = false;
+  }
+
+  update({ isKeyPatchesUsable, isStable, now = Date.now() }) {
+    if (!isKeyPatchesUsable || !isStable) {
+      this.stableStartTime = null;
+      this.hasFired = false;
+      return { fired: false };
+    }
+
+    if (this.stableStartTime === null) {
+      this.stableStartTime = now;
+      return { fired: false };
+    }
+
+    const elapsed = now - this.stableStartTime;
+    if (elapsed >= this.delayMs) {
+      if (!this.hasFired) {
+        this.hasFired = true;
+        if (typeof this.onBeep === 'function') this.onBeep();
+        if (typeof this.onCapture === 'function') this.onCapture();
+        return { fired: true };
+      }
+      return { fired: false };
+    }
+
+    return { fired: false };
+  }
+
+  reset() {
+    this.stableStartTime = null;
+    this.hasFired = false;
+  }
+}
+
+function executeLearnBadgeWorkflow(ppm, frames) {
+  const reading = captureBadgeReading(frames, { scanMode: false });
+  if (!reading.valid) {
+    return { success: false, reason: reading.refusalReason };
+  }
+  saveLearnedTemplate(ppm, reading.s3Hex, reading.s2Hex);
+  return { success: true, message: `Learned ${ppm} ppm`, s3Hex: reading.s3Hex, s2Hex: reading.s2Hex };
 }
 
 // Global initialization
@@ -1376,6 +1675,17 @@ if (typeof module !== 'undefined' && module.exports) {
     deleteAllRecords,
     computeIncrementalExposure,
     renderRecords,
+    AutoCaptureEngine,
+    executeLearnBadgeWorkflow,
+    // Scan Mode API
+    SCAN_SEQUENCE,
+    setScanMode,
+    getScanMode,
+    toggleScanMode,
+    getScanCounter,
+    resetScanCounter,
+    advanceScanCounter,
+    loadScanCounterState,
   };
 }
 
