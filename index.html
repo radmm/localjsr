@@ -563,6 +563,201 @@
       </section>
     </section>
 
+    <!-- DEDICATED PAGE: PURPLE SCALE READER -->
+    <section class="purple-scale-page" id="purpleScalePage" style="display:none;padding:16px 20px 80px;max-width:1120px;margin:0 auto;">
+      <div class="page-heading">
+        <button class="secondary-button" id="psBackToScanBtn" type="button" style="margin-bottom:12px;font-size:12px;height:32px;padding:0 12px;cursor:pointer;">&larr; Back to field scan</button>
+        <p class="eyebrow">Dedicated module / Purple scale</p>
+        <h1>Purple scale reader</h1>
+        <p class="lede">Reference (0 ppm, #C27FB9) vs sample patch. db differential colorimetry with on-device calibration.</p>
+      </div>
+
+      <section class="capture-layout">
+        <div class="capture-panel" id="psCaptureSection">
+          <div class="camera-frame" id="psCameraFrame">
+            <video id="psCameraFeed" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:cover;"></video>
+            <img id="psUploadedPreview" style="display:none;width:100%;height:100%;object-fit:contain;position:absolute;inset:0;" alt="Purple scale preview">
+            <div class="camera-placeholder" id="psCameraPlaceholder">
+              <strong>Camera / preview</strong>
+              <span>Tap to preview camera or load test badge</span>
+            </div>
+            <!-- Vertically split guide: Left Reference (0 ppm, #C27FB9), Right Sample -->
+            <div class="bs-badge-guide" id="psBadgeGuide" aria-hidden="true">
+              <div class="bs-guide-half" style="background:rgba(194, 127, 185, 0.15);">
+                <span>0 ppm REF (#C27FB9)</span>
+                <div class="bs-guide-sample-box">Center 40%</div>
+              </div>
+              <div class="bs-guide-divider"></div>
+              <div class="bs-guide-half" style="background:rgba(145, 102, 138, 0.15);">
+                <span>SAMPLE PATCH</span>
+                <div class="bs-guide-sample-box">Center 40%</div>
+              </div>
+            </div>
+            <div class="camera-state" id="psCameraState">Ready</div>
+            <div id="psCameraLockStatus" class="camera-lock-badge auto" style="position:absolute;top:8px;right:8px;">AE/AWB: Auto</div>
+          </div>
+
+          <div class="capture-actions" style="flex-wrap:wrap;gap:8px;">
+            <button class="capture-button" id="psCaptureButton" type="button">Capture 20 frames</button>
+            <button class="secondary-button" id="psRepeatTestButton" type="button">Repeat test (10x)</button>
+            <button class="secondary-button" id="psTestBadgeButton" type="button">Load test badge</button>
+            <button class="secondary-button" id="psUploadButton" type="button">Upload image</button>
+            <input id="psImageInput" type="file" accept="image/*" hidden>
+          </div>
+
+          <div class="bs-controls-bar" style="margin-top:12px;display:flex;align-items:center;gap:8px;font-size:12px;">
+            <span style="color:var(--text-muted);">Test badge level:</span>
+            <select id="psTestPpmSelect" class="secondary-button" style="height:32px;padding:0 8px;font-size:12px;cursor:pointer;">
+              <option value="0">0 ppm REF (#C27FB9)</option>
+              <option value="0.06">0.06 ppm (#92729D)</option>
+              <option value="0.1">0.1 ppm (#9786A7)</option>
+              <option value="0.25">0.25 ppm (#91668A)</option>
+              <option value="0.4">0.4 ppm (#8B4F6A)</option>
+              <option value="0.6">0.6 ppm (#925D74)</option>
+              <option value="1">1 ppm (#A47586)</option>
+              <option value="2.5" selected>2.5 ppm (#BA8E98)</option>
+              <option value="4">4 ppm (#CFB4A9)</option>
+              <option value="8">8 ppm (#E0C6AD)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Result Card -->
+        <aside class="session-panel" id="psResultSection">
+          <div class="panel-header"><span>Estimate, color match</span></div>
+          <div class="demo-summary-top">
+            <span class="eyebrow" id="psEstimateLabel">Estimate, color match</span>
+            <div class="demo-estimate-large" id="psEstimateLargePpm">-- ppm</div>
+          </div>
+
+          <div class="demo-color-meta-grid" style="margin-top:12px;">
+            <div class="demo-meta-item">
+              <small>Reference hex</small>
+              <div class="hex-badge-row">
+                <span class="color-dot" id="psRefDot" style="background-color:#C27FB9;"></span>
+                <code id="psRefHex">#C27FB9</code>
+              </div>
+            </div>
+            <div class="demo-meta-item">
+              <small>Sample hex</small>
+              <div class="hex-badge-row">
+                <span class="color-dot" id="psSampleDot"></span>
+                <code id="psSampleHex">--</code>
+              </div>
+            </div>
+            <div class="demo-meta-item">
+              <small>db (b*smp - b*ref)</small>
+              <strong class="demo-meta-value" id="psDbVal" style="color:#a855f7;">--</strong>
+            </div>
+            <div class="demo-meta-item">
+              <small>Matched table hex</small>
+              <div class="hex-badge-row">
+                <span class="color-dot" id="psTableDot"></span>
+                <code id="psMatchedTableHex">--</code>
+              </div>
+            </div>
+            <div class="demo-meta-item">
+              <small>Nearest labeled patch</small>
+              <strong class="demo-meta-value" id="psNearestPatchVal">--</strong>
+            </div>
+            <div class="demo-meta-item">
+              <small>Active table</small>
+              <span id="psProfileStatus" class="gate-tag pass">Default table</span>
+            </div>
+          </div>
+
+          <!-- Quality Gates -->
+          <div style="margin-top:12px;border-top:1px solid var(--border-color);padding-top:8px;">
+            <small style="color:var(--text-muted);display:block;margin-bottom:6px;">Quality gates:</small>
+            <div id="psQualityGates" style="display:flex;flex-direction:column;gap:4px;">
+              <span class="gate-tag pass" id="psGateUniformity">Uniformity: Pass</span>
+              <span class="gate-tag pass" id="psGateClipping">Clipping: Pass</span>
+              <span class="gate-tag pass" id="psGateRefCheck">Reference check (#C27FB9): Pass</span>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <!-- Repeat test diagnostics -->
+      <section class="demo-repeat-card" id="psRepeatTestCard" style="display:none;margin-top:16px;padding:16px;background:var(--surface-color, #1e293b);border-radius:8px;border:1px solid var(--border-color, #334155);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <h3 style="font-size:14px;margin:0;">Repeat test diagnostics (10 captures)</h3>
+          <span class="gate-tag pass" id="psRepeatStatus">Completed</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:12px;font-size:12px;">
+          <div><small style="color:var(--text-muted);display:block;">db Mean</small><strong id="psDbMean">--</strong></div>
+          <div><small style="color:var(--text-muted);display:block;">db Min / Max</small><span id="psDbMinMax">--</span></div>
+          <div><small style="color:var(--text-muted);display:block;">ppm Mean</small><strong id="psPpmMean">--</strong></div>
+          <div><small style="color:var(--text-muted);display:block;">ppm Min / Max</small><span id="psPpmMinMax">--</span></div>
+        </div>
+      </section>
+
+      <!-- Calibration Section -->
+      <section class="log-section" id="psCalibrationSection" style="margin-top:24px;">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">On-device calibration</p>
+            <h2>Calibrate purple scale</h2>
+            <p class="lede" style="font-size:13px;margin-top:4px;color:var(--text-muted);">
+              For each level, place the printed patch with the 0 ppm reference, and tap Calibrate level. Stored in localStorage.
+            </p>
+          </div>
+          <div class="records-header-actions">
+            <button class="secondary-button" id="psResetDefaultsBtn" type="button" style="font-size:12px;height:32px;">Reset to defaults</button>
+            <button class="text-button danger-text" id="psDeleteCalibrationBtn" type="button" style="font-size:12px;">Delete calibration</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Level</th>
+                <th>Built-in hex</th>
+                <th>Built-in db</th>
+                <th>Calibrated status</th>
+                <th>Calibrated db</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="psCalibrationTableBody">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- History Section -->
+      <section class="log-section" id="psHistorySection" style="margin-top:24px;">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Local history</p>
+            <h2>Recent readings (last 10)</h2>
+          </div>
+          <div class="records-header-actions">
+            <button class="text-button danger-text" id="psDeleteAllHistoryBtn" type="button" style="font-size:12px;">Delete all</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Reference hex</th>
+                <th>Sample hex</th>
+                <th>db</th>
+                <th>Matched hex</th>
+                <th>Estimate range</th>
+              </tr>
+            </thead>
+            <tbody id="psHistoryBody">
+              <tr class="empty-row"><td colspan="6">No readings yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
     <footer>
       <span>Local storage active</span>
       <span>Calibration profile v1.6</span>
@@ -664,6 +859,10 @@
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg>
       <span>Brown scale</span>
     </button>
+    <button class="nav-pill-btn" id="navPurpleScale" type="button" aria-label="Purple scale">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><path d="M12 3v18"></path></svg>
+      <span>Purple scale</span>
+    </button>
     <button class="nav-pill-btn" id="navResults" type="button" aria-label="View dose results">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
       <span>Results</span>
@@ -683,6 +882,7 @@
     const navItems = [
       { btnId: 'navScan', targetId: 'captureSection', isPage: false },
       { btnId: 'navBrownScale', targetId: 'brownScalePage', isPage: true },
+      { btnId: 'navPurpleScale', targetId: 'purpleScalePage', isPage: true },
       { btnId: 'navResults', targetId: 'resultPanel', isPage: false },
       { btnId: 'navRecords', targetId: 'recordsSection', isPage: false },
       { btnId: 'navSession', targetId: 'sessionSection', isPage: false }
@@ -694,26 +894,29 @@
 
       const workspace = document.querySelector('.workspace');
       const brownScalePage = document.getElementById('brownScalePage');
+      const purpleScalePage = document.getElementById('purpleScalePage');
 
       if (item.isPage) {
         if (workspace) workspace.style.display = 'none';
-        if (brownScalePage) {
-          brownScalePage.style.display = 'block';
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-          // Mirror stream to brown scale video if active
-          const mainVideo = document.querySelector('#cameraFeed');
-          const bsVideo = document.querySelector('#bsCameraFeed');
-          const bsPlaceholder = document.querySelector('#bsCameraPlaceholder');
-          if (bsVideo && mainVideo?.srcObject) {
-            bsVideo.srcObject = mainVideo.srcObject;
-            bsVideo.style.display = 'block';
-            if (bsPlaceholder) bsPlaceholder.style.display = 'none';
-            try { bsVideo.play(); } catch (e) {}
-          }
+        if (brownScalePage) brownScalePage.style.display = item.targetId === 'brownScalePage' ? 'block' : 'none';
+        if (purpleScalePage) purpleScalePage.style.display = item.targetId === 'purpleScalePage' ? 'block' : 'none';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+
+        const isPurple = item.targetId === 'purpleScalePage';
+        const targetVideo = isPurple ? document.querySelector('#psCameraFeed') : document.querySelector('#bsCameraFeed');
+        const targetPlaceholder = isPurple ? document.querySelector('#psCameraPlaceholder') : document.querySelector('#bsCameraPlaceholder');
+        const mainVideo = document.querySelector('#cameraFeed');
+
+        if (targetVideo && mainVideo?.srcObject) {
+          targetVideo.srcObject = mainVideo.srcObject;
+          targetVideo.style.display = 'block';
+          if (targetPlaceholder) targetPlaceholder.style.display = 'none';
+          try { targetVideo.play(); } catch (e) {}
         }
       } else {
         if (workspace) workspace.style.display = '';
         if (brownScalePage) brownScalePage.style.display = 'none';
+        if (purpleScalePage) purpleScalePage.style.display = 'none';
         const target = document.getElementById(item.targetId);
         if (target) {
           target.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -733,6 +936,11 @@
       });
 
       document.getElementById('bsBackToScanBtn')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        activateTab(navItems[0]);
+      });
+
+      document.getElementById('psBackToScanBtn')?.addEventListener('click', (e) => {
         e.preventDefault();
         activateTab(navItems[0]);
       });

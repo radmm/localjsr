@@ -549,6 +549,83 @@ assert.equal(customCalResult.usingCalibration, true);
 brownScaleReader.deleteCalibration();
 assert.equal(brownScaleReader.getCalibration(), null, 'Calibration should be deleted on reset');
 
+// --- Dedicated Purple Scale Reader Unit & Integration Tests ---
+const purpleScaleReader = brownScaleReader.PurpleScaleReader;
+
+// Test PS 1: each table db returns its own ppm
+const purpleScaleTable = [
+  { expectedPpm: 0, db: 0.0 },
+  { expectedPpm: 0.06, db: 1.5 },
+  { expectedPpm: 0.1, db: 4.8 },
+  { expectedPpm: 0.25, db: 6.9 },
+  { expectedPpm: 0.4, db: 15.3 },
+  { expectedPpm: 0.6, db: 15.9 },
+  { expectedPpm: 1, db: 17.9 },
+  { expectedPpm: 2.5, db: 21.0 },
+  { expectedPpm: 4, db: 29.0 },
+  { expectedPpm: 8, db: 35.7 },
+];
+
+for (const { expectedPpm, db } of purpleScaleTable) {
+  const interp = purpleScaleReader.interpolatePpm(db);
+  assert.equal(
+    interp,
+    expectedPpm,
+    `Purple scale db ${db} should interpolate to ${expectedPpm}, got ${interp}`
+  );
+}
+
+// Test PS 2: A uniform tint on both halves leaves db unchanged within tolerance
+const purpleRefLab = purpleScaleReader.pristineLab;
+const purpleTints = [
+  [8.0, -4.0, 5.0],
+  [-6.0, 8.0, -4.0],
+  [2.0, 2.0, 2.0],
+];
+
+for (const { expectedPpm, db } of purpleScaleTable) {
+  const smpLab = [purpleRefLab[0], purpleRefLab[1], purpleRefLab[2] + db];
+  const baseResult = purpleScaleReader.estimate(purpleRefLab, smpLab);
+
+  for (const tint of purpleTints) {
+    const tintedRef = [purpleRefLab[0] + tint[0], purpleRefLab[1] + tint[1], purpleRefLab[2] + tint[2]];
+    const tintedSmp = [smpLab[0] + tint[0], smpLab[1] + tint[1], smpLab[2] + tint[2]];
+    const tintedResult = purpleScaleReader.estimate(tintedRef, tintedSmp);
+
+    assert.ok(
+      Math.abs(baseResult.db - tintedResult.db) < 1e-4,
+      `Uniform tint ${tint} changed db (base: ${baseResult.db}, tinted: ${tintedResult.db})`
+    );
+    assert.equal(tintedResult.ppm, expectedPpm, `Tinted result ppm must equal expected ${expectedPpm}`);
+  }
+}
+
+// Test PS 3: A sample equal to the reference returns 0
+const equalPurpleResult = purpleScaleReader.estimate('#C27FB9', '#C27FB9');
+assert.equal(equalPurpleResult.ppm, 0, 'Sample equal to reference must return 0 ppm');
+assert.equal(equalPurpleResult.db, 0, 'Sample equal to reference must have db 0');
+assert.equal(equalPurpleResult.range, '0 to 0 ppm');
+
+// Test PS 4: Repeated identical synthetic captures return identical ppm
+const syntheticPurpleBadge = purpleScaleReader.createBadgeCanvas({ samplePpm: 2.5 });
+const purpleRepeatCaptures = [];
+for (let i = 0; i < 10; i++) {
+  const processed = purpleScaleReader.processFrames([syntheticPurpleBadge]);
+  assert.equal(processed.valid, true);
+  purpleRepeatCaptures.push(processed);
+}
+assert.equal(purpleRepeatCaptures.length, 10);
+const firstPurplePpm = purpleRepeatCaptures[0].ppm;
+const firstPurpleDb = purpleRepeatCaptures[0].db;
+for (let i = 1; i < 10; i++) {
+  assert.equal(purpleRepeatCaptures[i].ppm, firstPurplePpm, `Purple capture ${i} ppm must match first`);
+  assert.equal(purpleRepeatCaptures[i].db, firstPurpleDb, `Purple capture ${i} db must match first`);
+}
+
+// Test PS 5: Overlapping band check for 0.4 and 0.6 ppm
+const overlapResult = purpleScaleReader.estimate(purpleRefLab, [purpleRefLab[0], purpleRefLab[1], purpleRefLab[2] + 15.5]);
+assert.equal(overlapResult.range, '0.4 to 0.6 ppm', 'Neighbors 0.4 and 0.6 must show combined band');
+
 
 // Test 6: Demo stability buffer tests
 const sampledDemo = demoColorReader.sampleDemoCanvas(passUniformCanvas);

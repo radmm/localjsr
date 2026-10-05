@@ -1,54 +1,36 @@
 /**
- * H2S Badge Reader - Brown Scale Dedicated Module
+ * H2S Badge Reader - Shared Split Scale Engine (Brown Scale & Purple Scale)
  * 
- * Method:
- * 1. Guide rectangle split vertically: Left half is Pristine (#C4C3BF), Right half is Sample.
- * 2. Center 40% sampling away from divider and edges.
- * 3. 20-frame capture, per-channel median per half, convert to Lab.
- * 4. Reject with "Hold steady" if frame-to-frame spread of L* is above 1.0.
- * 5. Primary signal: dL = L*(reference) - L*(sample). Use dL only for ppm.
- * 6. Piecewise linear monotonic interpolation:
- *    0 -> 0, 7.8 -> 1, 12.8 -> 5, 23.3 -> 10, 36.8 -> 20, 45.0 -> 50, 53.0 -> 100. Clamp 0 to 100.
- * 7. Show range from dL - spread to dL + spread ("10 to 20 ppm"), and nearest labeled patch.
- * 8. Calibration for 6 ppm levels (1, 5, 10, 20, 50, 100) stored in localStorage.
- * 9. Diagnostics: Repeat test (10 captures: mean, min, max of dL and ppm) & history of last 10 readings.
+ * Reusable split capture module powering:
+ * 1. Brown scale (dL differential colorimetry)
+ * 2. Purple scale (db differential colorimetry)
+ * 
+ * Layout:
+ * - One guide rectangle split vertically: Left half is reference, right half is sample.
+ * - Samples center 40% of each half away from edges and divider.
+ * - 20-frame median per half in Lab space.
+ * - Monotonic piecewise linear interpolation.
+ * - On-device calibration and history storage in localStorage.
  */
 
 (function () {
   'use strict';
 
-  const BROWN_SCALE_CALIBRATION_STORAGE_KEY = 'h2s-brown-scale-calibration';
-  const BROWN_SCALE_HISTORY_STORAGE_KEY = 'h2s-brown-scale-history';
-  const SPREAD_THRESHOLD_L = 1.0;
   const ROI_STDDEV_THRESHOLD = 24.0;
   const CLIPPED_PIXEL_THRESHOLD = 0.02;
-  const PRISTINE_MAX_DELTA_E = 25.0;
+  const REFERENCE_MAX_DELTA_E = 25.0;
 
-  // Reference table (hex, Lab internally)
-  const BROWN_SCALE_REFERENCE_TABLE = [
-    { ppm: 0,   name: 'Pristine', hex: '#C4C3BF', dL: 0.0 },
-    { ppm: 1,   name: '1 ppm',    hex: '#C9A793', dL: 7.8 },
-    { ppm: 5,   name: '5 ppm',    hex: '#C39782', dL: 12.8 },
-    { ppm: 10,  name: '10 ppm',   hex: '#B17762', dL: 23.3 },
-    { ppm: 20,  name: '20 ppm',   hex: '#8F5346', dL: 36.8 },
-    { ppm: 50,  name: '50 ppm',   hex: '#6C463E', dL: 45.0 },
-    { ppm: 100, name: '100 ppm',  hex: '#4D3837', dL: 53.0 },
-  ];
-
-  // Two ROIs: one guide rectangle split vertically.
-  // Left half (x: 0..0.5): center 40% is x: 0.15, y: 0.30, w: 0.20, h: 0.40.
-  // Right half (x: 0.5..1.0): center 40% is x: 0.65, y: 0.30, w: 0.20, h: 0.40.
-  const BROWN_SCALE_ROIS = {
+  // Geometry: Left half (x: 0..0.5) center 40%, Right half (x: 0.5..1.0) center 40%
+  const SHARED_SPLIT_ROIS = {
     ref: {
       key: 'ref',
-      name: 'Pristine Reference (0 ppm)',
+      name: 'Reference Patch',
       shortName: 'REF',
       half: { x: 0.0, y: 0.0, w: 0.5, h: 1.0 },
       x: 0.15,
       y: 0.30,
       w: 0.20,
       h: 0.40,
-      color: '#C4C3BF',
     },
     sample: {
       key: 'sample',
@@ -59,10 +41,10 @@
       y: 0.30,
       w: 0.20,
       h: 0.40,
-      color: '#8F5346',
     },
   };
 
+  // Color space conversions
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
   }
@@ -144,22 +126,6 @@
     ];
   }
 
-  // Pre-calculate Lab for reference table
-  const REFERENCE_POINTS = BROWN_SCALE_REFERENCE_TABLE.map((item) => {
-    const rgb = hexToRgb(item.hex);
-    const lab = rgbToLab(rgb);
-    return {
-      ...item,
-      rgb,
-      lab,
-    };
-  });
-
-  const PRISTINE_LAB = REFERENCE_POINTS[0].lab;
-
-  /**
-   * Sample the center 40% of an ROI
-   */
   function sampleRoiMedian(context, width, height, roi) {
     const x = Math.max(0, Math.floor(roi.x * width));
     const y = Math.max(0, Math.floor(roi.y * height));
@@ -194,9 +160,6 @@
     ];
   }
 
-  /**
-   * Evaluate uniformity and clipping gates
-   */
   function evaluatePatchGates(context, width, height, roi) {
     const x = Math.max(0, Math.floor(roi.x * width));
     const y = Math.max(0, Math.floor(roi.y * height));
@@ -264,492 +227,667 @@
     };
   }
 
-  /**
-   * Monotonic piecewise linear interpolation of ppm against dL
-   * Table: 0 -> 0, 7.8 -> 1, 12.8 -> 5, 23.3 -> 10, 36.8 -> 20, 45.0 -> 50, 53.0 -> 100
-   * Clamped to 0 to 100.
-   */
-  function interpolateBrownScalePpm(dL, calibrationData = null) {
-    let table;
-    if (calibrationData && Array.isArray(calibrationData) && calibrationData.length >= 2) {
-      table = calibrationData.slice().sort((a, b) => a.dL - b.dL);
-    } else {
-      table = BROWN_SCALE_REFERENCE_TABLE.map((r) => ({ dL: r.dL, ppm: r.ppm }));
-    }
+  // --- CONFIGURATIONS ---
 
-    if (dL <= table[0].dL) {
-      return table[0].ppm;
-    }
-    const last = table[table.length - 1];
-    if (dL >= last.dL) {
-      return last.ppm;
-    }
+  const BROWN_SCALE_REFERENCE_TABLE = [
+    { ppm: 0,   name: 'Pristine', hex: '#C4C3BF', dL: 0.0,  signal: 0.0 },
+    { ppm: 1,   name: '1 ppm',    hex: '#C9A793', dL: 7.8,  signal: 7.8 },
+    { ppm: 5,   name: '5 ppm',    hex: '#C39782', dL: 12.8, signal: 12.8 },
+    { ppm: 10,  name: '10 ppm',   hex: '#B17762', dL: 23.3, signal: 23.3 },
+    { ppm: 20,  name: '20 ppm',   hex: '#8F5346', dL: 36.8, signal: 36.8 },
+    { ppm: 50,  name: '50 ppm',   hex: '#6C463E', dL: 45.0, signal: 45.0 },
+    { ppm: 100, name: '100 ppm',  hex: '#4D3837', dL: 53.0, signal: 53.0 },
+  ];
 
-    for (let i = 0; i < table.length - 1; i++) {
-      const p1 = table[i];
-      const p2 = table[i + 1];
-      if (dL >= p1.dL && dL <= p2.dL) {
-        if (Math.abs(p2.dL - p1.dL) < 1e-6) return p1.ppm;
-        const fraction = (dL - p1.dL) / (p2.dL - p1.dL);
-        const ppm = p1.ppm + fraction * (p2.ppm - p1.ppm);
-        return clamp(ppm, 0, 100);
+  const PURPLE_SCALE_REFERENCE_TABLE = [
+    { ppm: 0,    name: '0 ppm',    hex: '#C27FB9', db: 0.0,  signal: 0.0 },
+    { ppm: 0.06, name: '0.06 ppm', hex: '#92729D', db: 1.5,  signal: 1.5 },
+    { ppm: 0.1,  name: '0.1 ppm',  hex: '#9786A7', db: 4.8,  signal: 4.8 },
+    { ppm: 0.25, name: '0.25 ppm', hex: '#91668A', db: 6.9,  signal: 6.9 },
+    { ppm: 0.4,  name: '0.4 ppm',  hex: '#8B4F6A', db: 15.3, signal: 15.3 },
+    { ppm: 0.6,  name: '0.6 ppm',  hex: '#925D74', db: 15.9, signal: 15.9 },
+    { ppm: 1,    name: '1 ppm',    hex: '#A47586', db: 17.9, signal: 17.9 },
+    { ppm: 2.5,  name: '2.5 ppm',  hex: '#BA8E98', db: 21.0, signal: 21.0 },
+    { ppm: 4,    name: '4 ppm',    hex: '#CFB4A9', db: 29.0, signal: 29.0 },
+    { ppm: 8,    name: '8 ppm',    hex: '#E0C6AD', db: 35.7, signal: 35.7 },
+  ];
+
+  const BROWN_SCALE_CONFIG = {
+    id: 'brown-scale',
+    name: 'Brown scale',
+    signalKey: 'dL',
+    signalLabel: 'dL (L*ref - L*smp)',
+    // dL = L*(reference) - L*(sample)
+    computeSignal: (refLab, smpLab) => Number((refLab[0] - smpLab[0]).toFixed(2)),
+    // Spread of L*
+    computeFrameSpreadMetric: (refLab, smpLab) => refLab[0],
+    spreadMetricName: 'L*',
+    maxSpread: 1.0,
+    clampMin: 0,
+    clampMax: 100,
+    roundDigits: 1,
+    referenceHex: '#C4C3BF',
+    referenceName: 'Pristine REF (0 ppm)',
+    defaultSampleHex: '#8F5346',
+    table: BROWN_SCALE_REFERENCE_TABLE,
+    calibrationStorageKey: 'h2s-brown-scale-calibration',
+    historyStorageKey: 'h2s-brown-scale-history',
+    formatRange: (low, high, nearest) => `${low} to ${high} ppm`,
+  };
+
+  const PURPLE_SCALE_CONFIG = {
+    id: 'purple-scale',
+    name: 'Purple scale',
+    signalKey: 'db',
+    signalLabel: 'db (b*smp - b*ref)',
+    // db = b*(sample) - b*(reference)
+    computeSignal: (refLab, smpLab) => Number((smpLab[2] - refLab[2]).toFixed(2)),
+    // Spread of db
+    computeFrameSpreadMetric: (refLab, smpLab) => Number((smpLab[2] - refLab[2]).toFixed(2)),
+    spreadMetricName: 'db',
+    maxSpread: 1.0,
+    clampMin: 0,
+    clampMax: 8,
+    roundDigits: 2,
+    referenceHex: '#C27FB9',
+    referenceName: '0 ppm REF (#C27FB9)',
+    defaultSampleHex: '#91668A',
+    table: PURPLE_SCALE_REFERENCE_TABLE,
+    calibrationStorageKey: 'h2s-purple-scale-calibration',
+    historyStorageKey: 'h2s-purple-scale-history',
+    formatRange: (low, high, nearest, signalVal) => {
+      // Neighbors overlap: 0.4 and 0.6 ppm are almost identical (db 15.3 and 15.9)
+      if ((low <= 0.4 && high >= 0.6) || (nearest.ppm === 0.4 || nearest.ppm === 0.6) || (signalVal >= 14.5 && signalVal <= 16.5)) {
+        return '0.4 to 0.6 ppm';
       }
-    }
-    return 0;
-  }
+      return `${low} to ${high} ppm`;
+    },
+  };
 
   /**
-   * Find the nearest labeled patch in the reference table
+   * Factory function that constructs a dedicated split scale module
+   * Reused identically for Brown scale and Purple scale.
    */
-  function findNearestBrownScalePatch(dL) {
-    let nearest = BROWN_SCALE_REFERENCE_TABLE[0];
-    let minDiff = Infinity;
-    for (const item of BROWN_SCALE_REFERENCE_TABLE) {
-      const diff = Math.abs(dL - item.dL);
-      if (diff < minDiff) {
-        minDiff = diff;
-        nearest = item;
-      }
-    }
-    return nearest;
-  }
+  function createSplitScaleModule(config) {
+    const signalKey = config.signalKey;
+    const referenceHex = config.referenceHex;
+    const refRgbDefault = hexToRgb(referenceHex);
+    const refLabDefault = rgbToLab(refRgbDefault);
 
-  /**
-   * Get active calibration from localStorage if any
-   */
-  function getCalibration() {
-    if (typeof localStorage === 'undefined') return null;
-    try {
-      const raw = localStorage.getItem(BROWN_SCALE_CALIBRATION_STORAGE_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed) || parsed.length < 2) return null;
-      return parsed;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  /**
-   * Save calibration for a single ppm level
-   */
-  function saveCalibrationLevel(ppm, pristineHex, sampleHex, dL) {
-    if (typeof localStorage === 'undefined') return;
-    try {
-      let current = getCalibration() || [
-        { ppm: 0, pristineHex: '#C4C3BF', sampleHex: '#C4C3BF', dL: 0.0, timestamp: new Date().toISOString() },
-      ];
-      // Filter out existing calibration for this ppm if any
-      current = current.filter((c) => c.ppm !== ppm);
-      current.push({
-        ppm: Number(ppm),
-        pristineHex,
-        sampleHex,
-        dL: Number(dL),
-        timestamp: new Date().toISOString(),
-      });
-      // Sort by dL
-      current.sort((a, b) => a.dL - b.dL);
-      localStorage.setItem(BROWN_SCALE_CALIBRATION_STORAGE_KEY, JSON.stringify(current));
-    } catch (e) {
-      console.warn('Could not save calibration:', e);
-    }
-  }
-
-  /**
-   * Reset / delete calibration
-   */
-  function deleteCalibration() {
-    if (typeof localStorage === 'undefined') return;
-    try {
-      localStorage.removeItem(BROWN_SCALE_CALIBRATION_STORAGE_KEY);
-    } catch (e) {}
-  }
-
-  /**
-   * Get history of last 10 readings
-   */
-  function getHistory() {
-    if (typeof localStorage === 'undefined') return [];
-    try {
-      const raw = localStorage.getItem(BROWN_SCALE_HISTORY_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  /**
-   * Add reading to history (keeps last 10)
-   */
-  function addHistory(reading) {
-    if (typeof localStorage === 'undefined') return;
-    try {
-      const list = getHistory();
-      list.unshift(reading);
-      if (list.length > 10) list.length = 10;
-      localStorage.setItem(BROWN_SCALE_HISTORY_STORAGE_KEY, JSON.stringify(list));
-    } catch (e) {}
-  }
-
-  /**
-   * Delete all history
-   */
-  function deleteAllHistory() {
-    if (typeof localStorage === 'undefined') return;
-    try {
-      localStorage.removeItem(BROWN_SCALE_HISTORY_STORAGE_KEY);
-    } catch (e) {}
-  }
-
-  /**
-   * Core Estimation logic for two color inputs (Hex, RGB array, or Lab array)
-   */
-  function estimateBrownScale(refInput, sampleInput, { spread = 0, calibration = null } = {}) {
-    let refRgb, refLab, refHex;
-    let smpRgb, smpLab, smpHex;
-
-    if (typeof refInput === 'string') {
-      refHex = refInput.toUpperCase();
-      refRgb = hexToRgb(refHex);
-      refLab = rgbToLab(refRgb);
-    } else if (Array.isArray(refInput) && refInput[0] <= 100 && refInput.some((v) => !Number.isInteger(v) || v < 0)) {
-      refLab = refInput;
-      refRgb = labToRgb(refLab);
-      refHex = rgbToHex(refRgb);
-    } else if (Array.isArray(refInput)) {
-      refRgb = refInput;
-      refLab = rgbToLab(refRgb);
-      refHex = rgbToHex(refRgb);
-    } else {
-      refHex = '#C4C3BF';
-      refRgb = hexToRgb(refHex);
-      refLab = rgbToLab(refRgb);
-    }
-
-    if (typeof sampleInput === 'string') {
-      smpHex = sampleInput.toUpperCase();
-      smpRgb = hexToRgb(smpHex);
-      smpLab = rgbToLab(smpRgb);
-    } else if (Array.isArray(sampleInput) && sampleInput[0] <= 100 && sampleInput.some((v) => !Number.isInteger(v) || v < 0)) {
-      smpLab = sampleInput;
-      smpRgb = labToRgb(smpLab);
-      smpHex = rgbToHex(smpRgb);
-    } else if (Array.isArray(sampleInput)) {
-      smpRgb = sampleInput;
-      smpLab = rgbToLab(smpRgb);
-      smpHex = rgbToHex(smpRgb);
-    } else {
-      smpHex = '#C4C3BF';
-      smpRgb = hexToRgb(smpHex);
-      smpLab = rgbToLab(smpRgb);
-    }
-
-    // dL = L*(reference) - L*(sample). Use dL only for ppm.
-    const dL = Number((refLab[0] - smpLab[0]).toFixed(2));
-    const activeCal = calibration || getCalibration();
-    const ppm = clamp(Math.round(interpolateBrownScalePpm(dL, activeCal) * 10) / 10, 0, 100);
-
-    const dLLow = dL - spread;
-    const dLHigh = dL + spread;
-    const ppmLow = Math.round(interpolateBrownScalePpm(dLLow, activeCal));
-    const ppmHigh = Math.round(interpolateBrownScalePpm(dLHigh, activeCal));
-
-    const nearestPatch = findNearestBrownScalePatch(dL);
-    const range = `${ppmLow} to ${ppmHigh} ppm`;
-
-    return {
-      matched: true,
-      valid: true,
-      label: 'Estimate, color match',
-      pristineHex: refHex,
-      sampleHex: smpHex,
-      dL,
-      matchedTableHex: nearestPatch.hex,
-      nearestPatchPpm: nearestPatch.ppm,
-      nearestPatchName: nearestPatch.name,
-      ppm,
-      range,
-      displayPpm: range,
-      isRange: true,
-      refLab,
-      sampleLab: smpLab,
-      refRgb,
-      sampleRgb: smpRgb,
-      spread,
-      usingCalibration: Boolean(activeCal),
-    };
-  }
-
-  /**
-   * Process 20 frames (or array of frames) captured for Brown Scale
-   */
-  function processBrownScaleFrames(frames, { calibration = null } = {}) {
-    if (!frames || !frames.length) {
-      return { valid: false, refusalReason: 'No image frames captured' };
-    }
-
-    const frameCount = frames.length;
-    const perFrameLRef = [];
-    const perFrameLSample = [];
-    const perFrameDL = [];
-    const perFrameRefRgb = [];
-    const perFrameSampleRgb = [];
-    let gatesFailed = false;
-    let gateRefusal = null;
-
-    for (let i = 0; i < frameCount; i++) {
-      const frame = frames[i];
-      const ctx = frame.getContext('2d');
-      const width = frame.width;
-      const height = frame.height;
-
-      // Quality gates check on first frame or each frame
-      const gateRef = evaluatePatchGates(ctx, width, height, BROWN_SCALE_ROIS.ref);
-      const gateSample = evaluatePatchGates(ctx, width, height, BROWN_SCALE_ROIS.sample);
-      if (!gateRef.passed && !gatesFailed) {
-        gatesFailed = true;
-        gateRefusal = `Reference: ${gateRef.failureReason}`;
-      } else if (!gateSample.passed && !gatesFailed) {
-        gatesFailed = true;
-        gateRefusal = `Sample: ${gateSample.failureReason}`;
-      }
-
-      const rRgb = sampleRoiMedian(ctx, width, height, BROWN_SCALE_ROIS.ref);
-      const sRgb = sampleRoiMedian(ctx, width, height, BROWN_SCALE_ROIS.sample);
-      const rLab = rgbToLab(rRgb);
-      const sLab = rgbToLab(sRgb);
-
-      perFrameRefRgb.push(rRgb);
-      perFrameSampleRgb.push(sRgb);
-      perFrameLRef.push(rLab[0]);
-      perFrameLSample.push(sLab[0]);
-      perFrameDL.push(Number((rLab[0] - sLab[0]).toFixed(2)));
-    }
-
-    // Frame-to-frame spread of L* check across 20 frames
-    const spreadLRef = frameCount > 1 ? Number((Math.max(...perFrameLRef) - Math.min(...perFrameLRef)).toFixed(2)) : 0;
-    const spreadLSample = frameCount > 1 ? Number((Math.max(...perFrameLSample) - Math.min(...perFrameLSample)).toFixed(2)) : 0;
-    const spreadDL = frameCount > 1 ? Number((Math.max(...perFrameDL) - Math.min(...perFrameDL)).toFixed(2)) : 0;
-    const maxSpreadL = Math.max(spreadLRef, spreadLSample, spreadDL);
-
-    // Reject with "Hold steady" if frame-to-frame spread of L* is above 1.0
-    if (frameCount > 1 && maxSpreadL > SPREAD_THRESHOLD_L) {
+    const referencePoints = config.table.map((item) => {
+      const rgb = hexToRgb(item.hex);
+      const lab = rgbToLab(rgb);
       return {
-        valid: false,
-        refusalReason: 'Hold steady',
-        spreadL: maxSpreadL,
+        ...item,
+        rgb,
+        lab,
+        signal: item[signalKey] !== undefined ? item[signalKey] : item.signal,
       };
-    }
-
-    if (gatesFailed) {
-      return {
-        valid: false,
-        refusalReason: gateRefusal,
-      };
-    }
-
-    // Per-channel median per half across 20 frames
-    const calcMedianChannel = (values, channelIdx) => {
-      const arr = values.map((v) => v[channelIdx]).sort((a, b) => a - b);
-      const mid = Math.floor(arr.length / 2);
-      return arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
-    };
-
-    const medianRefRgb = [
-      Math.round(calcMedianChannel(perFrameRefRgb, 0)),
-      Math.round(calcMedianChannel(perFrameRefRgb, 1)),
-      Math.round(calcMedianChannel(perFrameRefRgb, 2)),
-    ];
-    const medianSampleRgb = [
-      Math.round(calcMedianChannel(perFrameSampleRgb, 0)),
-      Math.round(calcMedianChannel(perFrameSampleRgb, 1)),
-      Math.round(calcMedianChannel(perFrameSampleRgb, 2)),
-    ];
-
-    const medianRefLab = rgbToLab(medianRefRgb);
-    const medianSampleLab = rgbToLab(medianSampleRgb);
-
-    // Reference check: Reject if reference half is far from #C4C3BF in Lab (shadow or tint warning)
-    const deltaEPris = Math.sqrt(
-      (medianRefLab[0] - PRISTINE_LAB[0]) ** 2 +
-      (medianRefLab[1] - PRISTINE_LAB[1]) ** 2 +
-      (medianRefLab[2] - PRISTINE_LAB[2]) ** 2
-    );
-
-    if (deltaEPris > PRISTINE_MAX_DELTA_E) {
-      return {
-        valid: false,
-        refusalReason: 'Reference patch mismatch: check lighting or shadow (shadow or tint warning)',
-        deltaEPris: Number(deltaEPris.toFixed(2)),
-      };
-    }
-
-    const estimation = estimateBrownScale(medianRefLab, medianSampleLab, {
-      spread: maxSpreadL,
-      calibration,
     });
 
-    return {
-      ...estimation,
-      valid: true,
-      refusalReason: null,
-      maxSpreadL,
-      medianRefRgb,
-      medianSampleRgb,
-    };
-  }
+    const pristineLab = referencePoints[0].lab;
 
-  /**
-   * Run Repeat Test: 10 captures, compute mean, min, and max of dL and ppm
-   */
-  async function runBrownScaleRepeatTest(captureFunction, count = 10) {
-    const results = [];
-    for (let i = 0; i < count; i++) {
-      const frames = await captureFunction();
-      const res = processBrownScaleFrames(frames);
-      if (res.valid) {
-        results.push(res);
+    const rois = {
+      ref: { ...SHARED_SPLIT_ROIS.ref, color: referenceHex },
+      sample: { ...SHARED_SPLIT_ROIS.sample, color: config.defaultSampleHex },
+    };
+
+    /**
+     * Piecewise linear monotonic interpolation
+     */
+    function interpolatePpm(signalVal, calibrationData = null) {
+      let table;
+      if (calibrationData && Array.isArray(calibrationData) && calibrationData.length >= 2) {
+        table = calibrationData.slice().sort((a, b) => a[signalKey] - b[signalKey]).map((c) => ({
+          signal: c[signalKey],
+          ppm: c.ppm,
+        }));
+      } else {
+        table = referencePoints.map((r) => ({ signal: r.signal, ppm: r.ppm }));
+      }
+
+      if (signalVal <= table[0].signal) {
+        return table[0].ppm;
+      }
+      const last = table[table.length - 1];
+      if (signalVal >= last.signal) {
+        return last.ppm;
+      }
+
+      for (let i = 0; i < table.length - 1; i++) {
+        const p1 = table[i];
+        const p2 = table[i + 1];
+        if (signalVal >= p1.signal && signalVal <= p2.signal) {
+          if (Math.abs(p2.signal - p1.signal) < 1e-6) return p1.ppm;
+          const fraction = (signalVal - p1.signal) / (p2.signal - p1.signal);
+          const ppm = p1.ppm + fraction * (p2.ppm - p1.ppm);
+          return clamp(ppm, config.clampMin, config.clampMax);
+        }
+      }
+      return 0;
+    }
+
+    /**
+     * Find nearest patch in table
+     */
+    function findNearestPatch(signalVal) {
+      let nearest = referencePoints[0];
+      let minDiff = Infinity;
+      for (const item of referencePoints) {
+        const diff = Math.abs(signalVal - item.signal);
+        if (diff < minDiff) {
+          minDiff = diff;
+          nearest = item;
+        }
+      }
+      return nearest;
+    }
+
+    /**
+     * Calibration storage
+     */
+    function getCalibration() {
+      if (typeof localStorage === 'undefined') return null;
+      try {
+        const raw = localStorage.getItem(config.calibrationStorageKey);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed) || parsed.length < 2) return null;
+        return parsed;
+      } catch (e) {
+        return null;
       }
     }
 
-    if (!results.length) {
-      return null;
+    function saveCalibrationLevel(ppm, refHexVal, sampleHexVal, sigVal) {
+      if (typeof localStorage === 'undefined') return;
+      try {
+        let current = getCalibration() || [
+          {
+            ppm: referencePoints[0].ppm,
+            refHex: referenceHex,
+            sampleHex: referenceHex,
+            [signalKey]: 0.0,
+            timestamp: new Date().toISOString(),
+          },
+        ];
+        current = current.filter((c) => c.ppm !== Number(ppm));
+        current.push({
+          ppm: Number(ppm),
+          refHex: refHexVal,
+          sampleHex: sampleHexVal,
+          [signalKey]: Number(sigVal),
+          dL: Number(sigVal), // Backwards compatibility
+          db: Number(sigVal),
+          timestamp: new Date().toISOString(),
+        });
+        current.sort((a, b) => a[signalKey] - b[signalKey]);
+        localStorage.setItem(config.calibrationStorageKey, JSON.stringify(current));
+      } catch (e) {
+        console.warn('Could not save calibration:', e);
+      }
     }
 
-    const dLVals = results.map((r) => r.dL);
-    const ppmVals = results.map((r) => r.ppm);
+    function deleteCalibration() {
+      if (typeof localStorage === 'undefined') return;
+      try {
+        localStorage.removeItem(config.calibrationStorageKey);
+      } catch (e) {}
+    }
 
-    const mean = (arr) => arr.reduce((sum, v) => sum + v, 0) / arr.length;
+    /**
+     * History storage
+     */
+    function getHistory() {
+      if (typeof localStorage === 'undefined') return [];
+      try {
+        const raw = localStorage.getItem(config.historyStorageKey);
+        return raw ? JSON.parse(raw) : [];
+      } catch (e) {
+        return [];
+      }
+    }
 
-    return {
-      count: results.length,
-      dL: {
-        mean: Number(mean(dLVals).toFixed(2)),
-        min: Number(Math.min(...dLVals).toFixed(2)),
-        max: Number(Math.max(...dLVals).toFixed(2)),
-      },
-      ppm: {
-        mean: Number(mean(ppmVals).toFixed(1)),
-        min: Number(Math.min(...ppmVals).toFixed(1)),
-        max: Number(Math.max(...ppmVals).toFixed(1)),
-      },
-      results,
-    };
-  }
+    function addHistory(reading) {
+      if (typeof localStorage === 'undefined') return;
+      try {
+        const list = getHistory();
+        list.unshift(reading);
+        if (list.length > 10) list.length = 10;
+        localStorage.setItem(config.historyStorageKey, JSON.stringify(list));
+      } catch (e) {}
+    }
 
-  /**
-   * Synthetic canvas generator for Brown Scale
-   */
-  function createBrownScaleBadgeCanvas({
-    samplePpm = 20,
-    sampleHex = null,
-    tint = [0, 0, 0],
-    noiseStddev = 0,
-    clipped = false,
-    badReference = false,
-  } = {}) {
-    const width = 640;
-    const height = 480;
+    function deleteAllHistory() {
+      if (typeof localStorage === 'undefined') return;
+      try {
+        localStorage.removeItem(config.historyStorageKey);
+      } catch (e) {}
+    }
 
-    const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined' && typeof HTMLCanvasElement !== 'undefined';
-    let canvas;
-    if (isBrowser) {
-      canvas = document.createElement('canvas');
-    } else {
-      const pixels = new Uint8ClampedArray(width * height * 4);
-      canvas = {
-        width,
-        height,
-        toDataURL: () => 'data:image/jpeg;base64,mockbrown',
-        getContext: () => ({
-          filter: 'none',
-          getImageData: (x, y, w, h) => {
-            const sub = new Uint8ClampedArray(w * h * 4);
-            for (let row = 0; row < h; row++) {
-              for (let col = 0; col < w; col++) {
-                const srcIdx = ((y + row) * width + (x + col)) * 4;
-                const dstIdx = (row * w + col) * 4;
-                sub[dstIdx] = pixels[srcIdx];
-                sub[dstIdx + 1] = pixels[srcIdx + 1];
-                sub[dstIdx + 2] = pixels[srcIdx + 2];
-                sub[dstIdx + 3] = pixels[srcIdx + 3];
-              }
-            }
-            return { data: sub, width: w, height: h };
-          },
-        }),
-        _pixels: pixels,
+    /**
+     * Color parsing helper
+     */
+    function parseColor(input, defaultHex) {
+      if (typeof input === 'string') {
+        const hex = input.toUpperCase();
+        const rgb = hexToRgb(hex);
+        return { hex, rgb, lab: rgbToLab(rgb) };
+      }
+      if (Array.isArray(input)) {
+        if (input[0] <= 100 && input.some((v) => !Number.isInteger(v) || v < 0)) {
+          // Lab array
+          return { lab: input, rgb: labToRgb(input), hex: rgbToHex(labToRgb(input)) };
+        }
+        // RGB array
+        return { rgb: input, lab: rgbToLab(input), hex: rgbToHex(input) };
+      }
+      const hex = defaultHex;
+      const rgb = hexToRgb(hex);
+      return { hex, rgb, lab: rgbToLab(rgb) };
+    }
+
+    /**
+     * Core Estimation
+     */
+    function estimate(refInput, sampleInput, { spread = 0, calibration = null } = {}) {
+      const refParsed = parseColor(refInput, referenceHex);
+      const smpParsed = parseColor(sampleInput, config.defaultSampleHex);
+
+      const refLab = refParsed.lab;
+      const smpLab = smpParsed.lab;
+      const signalVal = config.computeSignal(refLab, smpLab);
+
+      const activeCal = calibration || getCalibration();
+      const rawPpm = interpolatePpm(signalVal, activeCal);
+      const ppm = clamp(
+        config.roundDigits === 1
+          ? Math.round(rawPpm * 10) / 10
+          : Math.round(rawPpm * 100) / 100,
+        config.clampMin,
+        config.clampMax
+      );
+
+      const sigLow = signalVal - spread;
+      const sigHigh = signalVal + spread;
+      const ppmLow = clamp(
+        config.roundDigits === 1
+          ? Math.round(interpolatePpm(sigLow, activeCal) * 10) / 10
+          : Math.round(interpolatePpm(sigLow, activeCal) * 100) / 100,
+        config.clampMin,
+        config.clampMax
+      );
+      const ppmHigh = clamp(
+        config.roundDigits === 1
+          ? Math.round(interpolatePpm(sigHigh, activeCal) * 10) / 10
+          : Math.round(interpolatePpm(sigHigh, activeCal) * 100) / 100,
+        config.clampMin,
+        config.clampMax
+      );
+
+      const nearestPatch = findNearestPatch(signalVal);
+      const range = config.formatRange(ppmLow, ppmHigh, nearestPatch, signalVal);
+
+      let nearestPatchName = nearestPatch.name;
+      if (config.id === 'purple-scale' && (nearestPatch.ppm === 0.4 || nearestPatch.ppm === 0.6)) {
+        nearestPatchName = '0.4 to 0.6 ppm (overlap)';
+      }
+
+      const result = {
+        matched: true,
+        valid: true,
+        label: 'Estimate, color match',
+        pristineHex: refParsed.hex,
+        refHex: refParsed.hex,
+        sampleHex: smpParsed.hex,
+        [signalKey]: signalVal,
+        signal: signalVal,
+        dL: signalVal, // For backward compatibility with existing tests
+        db: signalVal,
+        matchedTableHex: nearestPatch.hex,
+        nearestPatchPpm: nearestPatch.ppm,
+        nearestPatchName,
+        ppm,
+        range,
+        displayPpm: range,
+        isRange: true,
+        refLab,
+        sampleLab: smpLab,
+        refRgb: refParsed.rgb,
+        sampleRgb: smpParsed.rgb,
+        spread,
+        usingCalibration: Boolean(activeCal),
+      };
+
+      return result;
+    }
+
+    /**
+     * Process 20 frames per half
+     */
+    function processFrames(frames, { calibration = null } = {}) {
+      if (!frames || !frames.length) {
+        return { valid: false, refusalReason: 'No image frames captured' };
+      }
+
+      const frameCount = frames.length;
+      const perFrameSpreadMetric = [];
+      const perFrameRefRgb = [];
+      const perFrameSampleRgb = [];
+      let gatesFailed = false;
+      let gateRefusal = null;
+
+      for (let i = 0; i < frameCount; i++) {
+        const frame = frames[i];
+        const ctx = frame.getContext('2d');
+        const width = frame.width;
+        const height = frame.height;
+
+        const gateRef = evaluatePatchGates(ctx, width, height, rois.ref);
+        const gateSample = evaluatePatchGates(ctx, width, height, rois.sample);
+        if (!gateRef.passed && !gatesFailed) {
+          gatesFailed = true;
+          gateRefusal = `Reference: ${gateRef.failureReason}`;
+        } else if (!gateSample.passed && !gatesFailed) {
+          gatesFailed = true;
+          gateRefusal = `Sample: ${gateSample.failureReason}`;
+        }
+
+        const rRgb = sampleRoiMedian(ctx, width, height, rois.ref);
+        const sRgb = sampleRoiMedian(ctx, width, height, rois.sample);
+        const rLab = rgbToLab(rRgb);
+        const sLab = rgbToLab(sRgb);
+
+        perFrameRefRgb.push(rRgb);
+        perFrameSampleRgb.push(sRgb);
+        perFrameSpreadMetric.push(config.computeFrameSpreadMetric(rLab, sLab));
+      }
+
+      const spreadVal = frameCount > 1
+        ? Number((Math.max(...perFrameSpreadMetric) - Math.min(...perFrameSpreadMetric)).toFixed(2))
+        : 0;
+
+      // Reject if frame-to-frame spread is above maxSpread (1.0)
+      if (frameCount > 1 && spreadVal > config.maxSpread) {
+        return {
+          valid: false,
+          refusalReason: 'Hold steady',
+          spread: spreadVal,
+          spreadL: spreadVal, // compatibility
+          spreadDb: spreadVal,
+        };
+      }
+
+      if (gatesFailed) {
+        return {
+          valid: false,
+          refusalReason: gateRefusal,
+        };
+      }
+
+      // Per-channel median per half across frames
+      const calcMedianChannel = (values, channelIdx) => {
+        const arr = values.map((v) => v[channelIdx]).sort((a, b) => a - b);
+        const mid = Math.floor(arr.length / 2);
+        return arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
+      };
+
+      const medianRefRgb = [
+        Math.round(calcMedianChannel(perFrameRefRgb, 0)),
+        Math.round(calcMedianChannel(perFrameRefRgb, 1)),
+        Math.round(calcMedianChannel(perFrameRefRgb, 2)),
+      ];
+      const medianSampleRgb = [
+        Math.round(calcMedianChannel(perFrameSampleRgb, 0)),
+        Math.round(calcMedianChannel(perFrameSampleRgb, 1)),
+        Math.round(calcMedianChannel(perFrameSampleRgb, 2)),
+      ];
+
+      const medianRefLab = rgbToLab(medianRefRgb);
+      const medianSampleLab = rgbToLab(medianSampleRgb);
+
+      // Reference check: Warn if reference half is far from expected in Lab (tint or shadow)
+      const deltaERef = Math.sqrt(
+        (medianRefLab[0] - pristineLab[0]) ** 2 +
+        (medianRefLab[1] - pristineLab[1]) ** 2 +
+        (medianRefLab[2] - pristineLab[2]) ** 2
+      );
+
+      if (deltaERef > REFERENCE_MAX_DELTA_E) {
+        return {
+          valid: false,
+          refusalReason: 'Reference patch mismatch: check lighting or shadow (shadow or tint warning)',
+          deltaEPris: Number(deltaERef.toFixed(2)),
+          deltaERef: Number(deltaERef.toFixed(2)),
+        };
+      }
+
+      const estimation = estimate(medianRefLab, medianSampleLab, {
+        spread: spreadVal,
+        calibration,
+      });
+
+      return {
+        ...estimation,
+        valid: true,
+        refusalReason: null,
+        spread: spreadVal,
+        spreadL: spreadVal,
+        spreadDb: spreadVal,
+        deltaERef: Number(deltaERef.toFixed(2)),
+        deltaEPris: Number(deltaERef.toFixed(2)),
+        medianRefRgb,
+        medianSampleRgb,
       };
     }
-    canvas.width = width;
-    canvas.height = height;
 
-    const pristineRef = REFERENCE_POINTS[0];
-    let refRgb = badReference
-      ? [20, 20, 20]
-      : labToRgb([pristineRef.lab[0] + tint[0], pristineRef.lab[1] + tint[1], pristineRef.lab[2] + tint[2]]);
+    /**
+     * Repeat test diagnostics (10 captures)
+     */
+    async function runRepeatTest(captureFrameCallback, count = 10) {
+      const results = [];
+      for (let i = 0; i < count; i++) {
+        try {
+          const frames = await captureFrameCallback();
+          const processed = processFrames(frames);
+          if (processed && processed.valid) {
+            results.push(processed);
+          }
+        } catch (err) {
+          console.warn(`${config.name} repeat capture iteration failed:`, err);
+        }
+      }
 
-    let smpRgb;
-    if (sampleHex) {
-      const sLab = rgbToLab(hexToRgb(sampleHex));
-      smpRgb = labToRgb([sLab[0] + tint[0], sLab[1] + tint[1], sLab[2] + tint[2]]);
-    } else {
-      const match = REFERENCE_POINTS.find((r) => r.ppm === samplePpm) || pristineRef;
-      smpRgb = labToRgb([match.lab[0] + tint[0], match.lab[1] + tint[1], match.lab[2] + tint[2]]);
+      if (!results.length) return null;
+
+      const signals = results.map((r) => r[signalKey]);
+      const ppms = results.map((r) => r.ppm);
+
+      const meanSignal = signals.reduce((a, b) => a + b, 0) / signals.length;
+      const minSignal = Math.min(...signals);
+      const maxSignal = Math.max(...signals);
+
+      const meanPpm = ppms.reduce((a, b) => a + b, 0) / ppms.length;
+      const minPpm = Math.min(...ppms);
+      const maxPpm = Math.max(...ppms);
+
+      return {
+        count: results.length,
+        [signalKey]: {
+          mean: Number(meanSignal.toFixed(2)),
+          min: Number(minSignal.toFixed(2)),
+          max: Number(maxSignal.toFixed(2)),
+        },
+        dL: {
+          mean: Number(meanSignal.toFixed(2)),
+          min: Number(minSignal.toFixed(2)),
+          max: Number(maxSignal.toFixed(2)),
+        },
+        db: {
+          mean: Number(meanSignal.toFixed(2)),
+          min: Number(minSignal.toFixed(2)),
+          max: Number(maxSignal.toFixed(2)),
+        },
+        ppm: {
+          mean: Number(meanPpm.toFixed(config.roundDigits)),
+          min: Number(minPpm.toFixed(config.roundDigits)),
+          max: Number(maxPpm.toFixed(config.roundDigits)),
+        },
+      };
     }
 
-    if (isBrowser) {
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = `rgb(${refRgb[0]}, ${refRgb[1]}, ${refRgb[2]})`;
-      ctx.fillRect(0, 0, width / 2, height);
+    /**
+     * Create synthetic badge canvas for testing / demonstration
+     */
+    function createBadgeCanvas({
+      samplePpm = 20,
+      tint = [0, 0, 0],
+      noiseStddev = 0,
+      badReference = false,
+      clipped = false,
+      width = 400,
+      height = 200,
+    } = {}) {
+      const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined' && typeof HTMLCanvasElement !== 'undefined';
+      let canvas;
+      let px;
 
-      ctx.fillStyle = `rgb(${smpRgb[0]}, ${smpRgb[1]}, ${smpRgb[2]})`;
-      ctx.fillRect(width / 2, 0, width / 2, height);
-    } else {
-      const px = canvas._pixels;
+      if (isBrowser) {
+        canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        const imgData = ctx.createImageData(width, height);
+        px = imgData.data;
+        canvas._imgData = imgData;
+      } else {
+        px = new Uint8ClampedArray(width * height * 4);
+        canvas = {
+          width,
+          height,
+          toDataURL: () => 'data:image/jpeg;base64,mock',
+          getContext: () => ({
+            filter: 'none',
+            getImageData: (x, y, w, h) => {
+              const sub = new Uint8ClampedArray(w * h * 4);
+              for (let row = 0; row < h; row++) {
+                for (let col = 0; col < w; col++) {
+                  const srcIdx = ((y + row) * width + (x + col)) * 4;
+                  const dstIdx = (row * w + col) * 4;
+                  sub[dstIdx] = px[srcIdx];
+                  sub[dstIdx + 1] = px[srcIdx + 1];
+                  sub[dstIdx + 2] = px[srcIdx + 2];
+                  sub[dstIdx + 3] = px[srcIdx + 3];
+                }
+              }
+              return { data: sub, width: w, height: h };
+            },
+          }),
+        };
+      }
+
+      // Reference color
+      let refRgb = hexToRgb(referenceHex);
+      if (badReference) {
+        refRgb = [30, 220, 60];
+      }
+
+      // Sample color based on ppm
+      let smpHex = config.defaultSampleHex;
+      const exactMatch = referencePoints.find((p) => Math.abs(p.ppm - samplePpm) < 0.001);
+      if (exactMatch) {
+        smpHex = exactMatch.hex;
+      } else {
+        const nearest = findNearestPatch(samplePpm);
+        smpHex = nearest.hex;
+      }
+      const smpRgb = hexToRgb(smpHex);
+
+      const refLab = rgbToLab(refRgb);
+      const smpLab = rgbToLab(smpRgb);
+
+      const tintedRefLab = [refLab[0] + tint[0], refLab[1] + tint[1], refLab[2] + tint[2]];
+      const tintedSmpLab = [smpLab[0] + tint[0], smpLab[1] + tint[1], smpLab[2] + tint[2]];
+
+      const tintedRefRgb = labToRgb(tintedRefLab);
+      const tintedSmpRgb = labToRgb(tintedSmpLab);
+
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
           const idx = (y * width + x) * 4;
           const isLeft = x < width / 2;
-          let color = isLeft ? refRgb : smpRgb;
+          const isDivider = Math.abs(x - width / 2) <= 1;
 
-          let r = color[0];
-          let g = color[1];
-          let b = color[2];
+          if (isDivider) {
+            px[idx] = 255;
+            px[idx + 1] = 255;
+            px[idx + 2] = 255;
+            px[idx + 3] = 255;
+          } else {
+            let [r, g, b] = isLeft ? tintedRefRgb : tintedSmpRgb;
 
-          if (noiseStddev > 0 && !isLeft) {
-            const noise = ((x + y) % 2 === 0 ? 1 : -1) * noiseStddev * 1.5;
-            r = clamp(Math.round(r + noise), 10, 240);
-            g = clamp(Math.round(g + noise), 10, 240);
-            b = clamp(Math.round(b + noise), 10, 240);
+            if (noiseStddev > 0 && !isLeft) {
+              const noise = ((x + y) % 2 === 0 ? 1 : -1) * noiseStddev * 1.5;
+              r = clamp(Math.round(r + noise), 10, 240);
+              g = clamp(Math.round(g + noise), 10, 240);
+              b = clamp(Math.round(b + noise), 10, 240);
+            }
+
+            if (clipped && !isLeft) {
+              r = 255;
+              g = 255;
+              b = 255;
+            }
+
+            px[idx] = r;
+            px[idx + 1] = g;
+            px[idx + 2] = b;
+            px[idx + 3] = 255;
           }
-
-          if (clipped && !isLeft) {
-            r = 255;
-            g = 255;
-            b = 255;
-          }
-
-          px[idx] = r;
-          px[idx + 1] = g;
-          px[idx + 2] = b;
-          px[idx + 3] = 255;
         }
       }
+
+      if (isBrowser) {
+        canvas.getContext('2d').putImageData(canvas._imgData, 0, 0);
+      }
+
+      return canvas;
     }
 
-    return canvas;
+    return {
+      config,
+      rois,
+      referencePoints,
+      pristineLab,
+      interpolatePpm,
+      findNearestPatch,
+      estimate,
+      processFrames,
+      runRepeatTest,
+      getCalibration,
+      saveCalibrationLevel,
+      deleteCalibration,
+      getHistory,
+      addHistory,
+      deleteAllHistory,
+      createBadgeCanvas,
+    };
   }
 
+  // Instantiate Modules
+  const BrownScaleModuleInstance = createSplitScaleModule(BROWN_SCALE_CONFIG);
+  const PurpleScaleModuleInstance = createSplitScaleModule(PURPLE_SCALE_CONFIG);
+
+  // CommonJS and browser exports with backwards-compatibility aliases
   const BrownScaleReaderModule = {
+    ...BrownScaleModuleInstance,
     BROWN_SCALE_REFERENCE_TABLE,
-    BROWN_SCALE_ROIS,
-    SPREAD_THRESHOLD_L,
+    BROWN_SCALE_ROIS: BrownScaleModuleInstance.rois,
+    SPREAD_THRESHOLD_L: 1.0,
     ROI_STDDEV_THRESHOLD,
     CLIPPED_PIXEL_THRESHOLD,
-    PRISTINE_MAX_DELTA_E,
-    PRISTINE_LAB,
+    PRISTINE_MAX_DELTA_E: REFERENCE_MAX_DELTA_E,
+    PRISTINE_LAB: BrownScaleModuleInstance.pristineLab,
     clamp,
     hexToRgb,
     rgbToHex,
@@ -757,18 +895,35 @@
     labToRgb,
     sampleRoiMedian,
     evaluatePatchGates,
-    interpolateBrownScalePpm,
-    findNearestBrownScalePatch,
-    estimateBrownScale,
-    processBrownScaleFrames,
-    runBrownScaleRepeatTest,
-    getCalibration,
-    saveCalibrationLevel,
-    deleteCalibration,
-    getHistory,
-    addHistory,
-    deleteAllHistory,
-    createBrownScaleBadgeCanvas,
+    interpolateBrownScalePpm: BrownScaleModuleInstance.interpolatePpm,
+    findNearestBrownScalePatch: BrownScaleModuleInstance.findNearestPatch,
+    estimateBrownScale: BrownScaleModuleInstance.estimate,
+    processBrownScaleFrames: BrownScaleModuleInstance.processFrames,
+    runBrownScaleRepeatTest: BrownScaleModuleInstance.runRepeatTest,
+    createBrownScaleBadgeCanvas: BrownScaleModuleInstance.createBadgeCanvas,
+    // Provide purple scale exports on module
+    PurpleScaleReader: PurpleScaleModuleInstance,
+    purpleScaleReader: PurpleScaleModuleInstance,
+    PURPLE_SCALE_CONFIG,
+    PURPLE_SCALE_REFERENCE_TABLE,
+    interpolatePurpleScalePpm: PurpleScaleModuleInstance.interpolatePpm,
+    estimatePurpleScale: PurpleScaleModuleInstance.estimate,
+    processPurpleScaleFrames: PurpleScaleModuleInstance.processFrames,
+    runPurpleScaleRepeatTest: PurpleScaleModuleInstance.runRepeatTest,
+    createPurpleScaleBadgeCanvas: PurpleScaleModuleInstance.createBadgeCanvas,
+    createSplitScaleModule,
+  };
+
+  const PurpleScaleReaderModule = {
+    ...PurpleScaleModuleInstance,
+    PURPLE_SCALE_REFERENCE_TABLE,
+    PURPLE_SCALE_ROIS: PurpleScaleModuleInstance.rois,
+    interpolatePurpleScalePpm: PurpleScaleModuleInstance.interpolatePpm,
+    findNearestPurpleScalePatch: PurpleScaleModuleInstance.findNearestPatch,
+    estimatePurpleScale: PurpleScaleModuleInstance.estimate,
+    processPurpleScaleFrames: PurpleScaleModuleInstance.processFrames,
+    runPurpleScaleRepeatTest: PurpleScaleModuleInstance.runRepeatTest,
+    createPurpleScaleBadgeCanvas: PurpleScaleModuleInstance.createBadgeCanvas,
   };
 
   if (typeof module !== 'undefined' && module.exports) {
@@ -777,6 +932,6 @@
 
   if (typeof window !== 'undefined') {
     window.BrownScaleReader = BrownScaleReaderModule;
+    window.PurpleScaleReader = PurpleScaleReaderModule;
   }
-
 })();

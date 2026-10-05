@@ -52,7 +52,14 @@ if (typeof require !== 'undefined') {
 
 function getBrownScaleReader() {
   if (typeof window !== 'undefined' && window.BrownScaleReader) return window.BrownScaleReader;
-  return BrownScaleReaderModule;
+  return typeof BrownScaleReaderModule !== 'undefined' ? BrownScaleReaderModule : null;
+}
+
+function getPurpleScaleReader() {
+  if (typeof window !== 'undefined' && window.PurpleScaleReader) return window.PurpleScaleReader;
+  if (typeof window !== 'undefined' && window.BrownScaleReader?.PurpleScaleReader) return window.BrownScaleReader.PurpleScaleReader;
+  if (typeof BrownScaleReaderModule !== 'undefined' && BrownScaleReaderModule.PurpleScaleReader) return BrownScaleReaderModule.PurpleScaleReader;
+  return null;
 }
 
 let demoStabilityBuffer = null;
@@ -1991,388 +1998,434 @@ function initBrowser() {
 
   renderDemoHistory();
 
-  // --- Brown Scale Dedicated Page Controller ---
-  let lastBrownScaleReading = null;
-  let lastBrownScaleFrame = null;
+  // --- Unified Split Scale Dedicated Page Controller (Brown & Purple Scales) ---
+  function setupSplitScaleController({
+    prefix,
+    getReader,
+    signalKey,
+    refHexDefault,
+    defaultSampleHex,
+    defaultTestPpm,
+    pageId,
+    navBtnId,
+  }) {
+    let lastReading = null;
+    let lastFrame = null;
 
-  function renderBrownScaleCalibration() {
-    const bsReader = getBrownScaleReader();
-    if (!bsReader) return;
-    const tbody = document.querySelector('#bsCalibrationTableBody');
-    const profileStatus = document.querySelector('#bsProfileStatus');
-    if (!tbody) return;
-
-    const calData = bsReader.getCalibration();
-    const levels = [
-      { ppm: 1, hex: '#C9A793', dL: 7.8 },
-      { ppm: 5, hex: '#C39782', dL: 12.8 },
-      { ppm: 10, hex: '#B17762', dL: 23.3 },
-      { ppm: 20, hex: '#8F5346', dL: 36.8 },
-      { ppm: 50, hex: '#6C463E', dL: 45.0 },
-      { ppm: 100, hex: '#4D3837', dL: 53.0 },
-    ];
-
-    if (profileStatus) {
-      if (calData && calData.length >= 2) {
-        profileStatus.textContent = `Calibrated (${calData.length} pts)`;
-        profileStatus.className = 'gate-tag pass';
-      } else {
-        profileStatus.textContent = 'Default table';
-        profileStatus.className = 'gate-tag';
+    function getTable() {
+      const reader = getReader();
+      if (!reader) return [];
+      if (prefix === 'ps') {
+        return reader.PURPLE_SCALE_REFERENCE_TABLE || reader.referencePoints || [];
       }
+      return reader.BROWN_SCALE_REFERENCE_TABLE || reader.referencePoints || [];
     }
 
-    tbody.innerHTML = levels.map((lvl) => {
-      const matchCal = calData ? calData.find((c) => c.ppm === lvl.ppm) : null;
-      const isCal = Boolean(matchCal);
-      const caldLStr = isCal ? matchCal.dL.toFixed(2) : '—';
-      const statusTag = isCal
-        ? '<span class="gate-tag pass">Calibrated</span>'
-        : '<span class="gate-tag">Default</span>';
-      return `<tr>
-        <td><strong>${lvl.ppm} ppm</strong></td>
-        <td><code>${lvl.hex}</code></td>
-        <td>${lvl.dL.toFixed(1)}</td>
-        <td>${statusTag}</td>
-        <td><strong>${caldLStr}</strong></td>
-        <td>
-          <button class="secondary-button bs-cal-btn" data-ppm="${lvl.ppm}" type="button" style="font-size:11px;height:28px;padding:0 8px;">
-            Calibrate level
-          </button>
-        </td>
-      </tr>`;
-    }).join('');
+    function renderCalibration() {
+      const currentReader = getReader();
+      if (!currentReader) return;
+      const tbody = document.querySelector(`#${prefix}CalibrationTableBody`);
+      const profileStatus = document.querySelector(`#${prefix}ProfileStatus`);
+      if (!tbody) return;
 
-    tbody.querySelectorAll('.bs-cal-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const ppm = Number(btn.dataset.ppm);
-        const refHex = lastBrownScaleReading?.pristineHex || '#C4C3BF';
-        const sampleHex = lastBrownScaleReading?.sampleHex || (levels.find(l => l.ppm === ppm)?.hex || '#8F5346');
-        const dL = lastBrownScaleReading?.dL ?? (levels.find(l => l.ppm === ppm)?.dL || 20.0);
-        bsReader.saveCalibrationLevel(ppm, refHex, sampleHex, dL);
-        renderBrownScaleCalibration();
-        if (lastBrownScaleFrame) {
-          updateBrownScaleReadout(bsReader.processBrownScaleFrames([lastBrownScaleFrame]));
+      const calData = currentReader.getCalibration();
+      if (profileStatus) {
+        if (calData && calData.length >= 2) {
+          profileStatus.textContent = `Calibrated (${calData.length} pts)`;
+          profileStatus.className = 'gate-tag pass';
+        } else {
+          profileStatus.textContent = 'Default table';
+          profileStatus.className = 'gate-tag';
         }
-      });
-    });
-  }
-
-  function renderBrownScaleHistory() {
-    const bsReader = getBrownScaleReader();
-    if (!bsReader) return;
-    const history = bsReader.getHistory();
-    const tbody = document.querySelector('#bsHistoryBody');
-    if (!tbody) return;
-
-    if (!history.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No readings yet.</td></tr>';
-      return;
-    }
-
-    tbody.innerHTML = history.map((item) => {
-      const timeStr = item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
-      const dLStr = typeof item.dL === 'number' ? (item.dL >= 0 ? `+${item.dL.toFixed(2)}` : item.dL.toFixed(2)) : '--';
-      return `<tr>
-        <td>${timeStr}</td>
-        <td><code>${item.pristineHex || '--'}</code></td>
-        <td><code>${item.sampleHex || '--'}</code></td>
-        <td><strong style="color:#38bdf8;">${dLStr}</strong></td>
-        <td><code>${item.matchedTableHex || '--'}</code></td>
-        <td><strong>${item.range || (item.ppm !== null ? item.ppm + ' ppm' : '--')}</strong></td>
-      </tr>`;
-    }).join('');
-  }
-
-  function updateBrownScaleReadout(result) {
-    if (!result) return;
-    const bsReader = getBrownScaleReader();
-    lastBrownScaleReading = result;
-
-    const largePpm = document.querySelector('#bsEstimateLargePpm');
-    if (largePpm) {
-      if (!result.valid) {
-        largePpm.textContent = result.refusalReason || 'Hold steady';
-        largePpm.style.color = 'var(--status-invalid-text, #f87171)';
-      } else {
-        largePpm.textContent = result.displayPpm || `${result.ppm} ppm`;
-        largePpm.style.color = 'var(--text-primary)';
       }
-    }
 
-    if (result.valid) {
-      const pPris = document.querySelector('#bsPristineHex');
-      if (pPris) pPris.textContent = result.pristineHex || '--';
-      const pSmp = document.querySelector('#bsSampleHex');
-      if (pSmp) pSmp.textContent = result.sampleHex || '--';
-      const dLVal = document.querySelector('#bsDLVal');
-      if (dLVal) dLVal.textContent = typeof result.dL === 'number' ? (result.dL >= 0 ? `+${result.dL.toFixed(2)}` : result.dL.toFixed(2)) : '--';
-      const matchedHex = document.querySelector('#bsMatchedTableHex');
-      if (matchedHex) matchedHex.textContent = result.matchedTableHex || '--';
-      const nearestPatch = document.querySelector('#bsNearestPatchVal');
-      if (nearestPatch) nearestPatch.textContent = result.nearestPatchPpm !== undefined ? `${result.nearestPatchPpm} ppm (${result.matchedTableHex})` : '--';
+      const table = getTable();
+      tbody.innerHTML = table.map((lvl) => {
+        const matchCal = calData ? calData.find((c) => Math.abs(c.ppm - lvl.ppm) < 0.001) : null;
+        const isCal = Boolean(matchCal);
+        const calSig = isCal
+          ? (matchCal[signalKey] !== undefined ? matchCal[signalKey].toFixed(2) : matchCal.signal?.toFixed(2))
+          : '—';
+        const statusTag = isCal
+          ? '<span class="gate-tag pass">Calibrated</span>'
+          : '<span class="gate-tag">Default</span>';
+        const sigVal = lvl[signalKey] !== undefined ? lvl[signalKey] : lvl.signal;
+        return `<tr>
+          <td><strong>${lvl.ppm} ppm</strong></td>
+          <td><code>${lvl.hex}</code></td>
+          <td>${sigVal !== undefined ? sigVal.toFixed(1) : '--'}</td>
+          <td>${statusTag}</td>
+          <td><strong>${calSig}</strong></td>
+          <td>
+            <button class="secondary-button ${prefix}-cal-btn" data-ppm="${lvl.ppm}" type="button" style="font-size:11px;height:28px;padding:0 8px;">
+              Calibrate level
+            </button>
+          </td>
+        </tr>`;
+      }).join('');
 
-      const refDot = document.querySelector('#bsRefDot');
-      if (refDot && result.pristineHex) refDot.style.backgroundColor = result.pristineHex;
-      const smpDot = document.querySelector('#bsSampleDot');
-      if (smpDot && result.sampleHex) smpDot.style.backgroundColor = result.sampleHex;
-      const tblDot = document.querySelector('#bsTableDot');
-      if (tblDot && result.matchedTableHex) tblDot.style.backgroundColor = result.matchedTableHex;
-
-      if (bsReader) {
-        bsReader.addHistory({
-          timestamp: new Date().toISOString(),
-          pristineHex: result.pristineHex,
-          sampleHex: result.sampleHex,
-          dL: result.dL,
-          matchedTableHex: result.matchedTableHex,
-          range: result.displayPpm || `${result.ppm} ppm`,
-          ppm: result.ppm,
-        });
-        renderBrownScaleHistory();
-      }
-    }
-
-    // Quality gates update
-    const gUnif = document.querySelector('#bsGateUniformity');
-    const gClip = document.querySelector('#bsGateClipping');
-    const gRef = document.querySelector('#bsGateRefCheck');
-    if (gUnif) gUnif.className = `gate-tag ${result.valid ? 'pass' : 'fail'}`;
-    if (gClip) gClip.className = `gate-tag ${result.valid ? 'pass' : 'fail'}`;
-    if (gRef) {
-      if (result.deltaEPris !== undefined) {
-        gRef.className = `gate-tag ${result.deltaEPris <= 25 ? 'pass' : 'fail'}`;
-        gRef.textContent = `Reference check (#C4C3BF): ${result.deltaEPris <= 25 ? 'Pass' : 'Warning'}`;
-      } else {
-        gRef.className = 'gate-tag pass';
-        gRef.textContent = 'Reference check (#C4C3BF): Pass';
-      }
-    }
-  }
-
-  async function captureBrownScale20Frames() {
-    const bsVideo = document.querySelector('#bsCameraFeed');
-    const mainVideo = document.querySelector('#cameraFeed');
-    const video = (bsVideo && !bsVideo.paused && bsVideo.readyState >= 2 && bsVideo.videoWidth > 0)
-      ? bsVideo
-      : mainVideo;
-    const frames = [];
-    const isVideoActive = video && !video.paused && video.readyState >= 2 && video.videoWidth > 0;
-
-    for (let i = 0; i < 20; i++) {
-      if (isVideoActive) {
-        const c = document.createElement('canvas');
-        c.width = video.videoWidth;
-        c.height = video.videoHeight;
-        c.getContext('2d').drawImage(video, 0, 0);
-        frames.push(c);
-      } else if (lastBrownScaleFrame) {
-        frames.push(lastBrownScaleFrame);
-      } else {
-        const bsReader = getBrownScaleReader();
-        const testCanvas = bsReader ? bsReader.createBrownScaleBadgeCanvas({ samplePpm: 20 }) : null;
-        if (testCanvas) frames.push(testCanvas);
-      }
-    }
-    return frames;
-  }
-
-  // Brown scale event listeners
-  document.querySelector('#bsTestBadgeButton')?.addEventListener('click', () => {
-    const bsReader = getBrownScaleReader();
-    if (!bsReader) return;
-    const select = document.querySelector('#bsTestPpmSelect');
-    const ppm = Number(select?.value || 20);
-    const canvas = bsReader.createBrownScaleBadgeCanvas({ samplePpm: ppm });
-    lastBrownScaleFrame = canvas;
-
-    const preview = document.querySelector('#bsUploadedPreview');
-    const placeholder = document.querySelector('#bsCameraPlaceholder');
-    const video = document.querySelector('#bsCameraFeed');
-    if (placeholder) placeholder.style.display = 'none';
-    if (video) video.style.display = 'none';
-    if (preview) {
-      preview.src = canvas.toDataURL('image/jpeg');
-      preview.style.display = 'block';
-    }
-
-    const stateEl = document.querySelector('#bsCameraState');
-    if (stateEl) stateEl.textContent = `TEST BADGE (${ppm} PPM)`;
-
-    const result = bsReader.processBrownScaleFrames([canvas]);
-    updateBrownScaleReadout(result);
-  });
-
-  document.querySelector('#bsCaptureButton')?.addEventListener('click', async () => {
-    const bsReader = getBrownScaleReader();
-    if (!bsReader) return;
-    const btn = document.querySelector('#bsCaptureButton');
-    const origText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Capturing 20 frames...';
-
-    try {
-      if (cameraStream) {
-        const track = cameraStream.getVideoTracks()[0];
-        let locked = false;
-        if (track?.getCapabilities && track?.applyConstraints) {
-          try {
-            const caps = track.getCapabilities() || {};
-            const adv = {};
-            if (caps.exposureMode?.includes('manual')) adv.exposureMode = 'manual';
-            if (caps.whiteBalanceMode?.includes('manual')) adv.whiteBalanceMode = 'manual';
-            if (Object.keys(adv).length > 0) {
-              await track.applyConstraints({ advanced: [adv] });
-              locked = true;
-            }
-          } catch (e) {
-            locked = false;
+      tbody.querySelectorAll(`.${prefix}-cal-btn`).forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const currentR = getReader();
+          if (!currentR) return;
+          const ppm = Number(btn.dataset.ppm);
+          const tableList = getTable();
+          const refHex = lastReading?.refHex || lastReading?.pristineHex || refHexDefault;
+          const sampleHex = lastReading?.sampleHex || (tableList.find(l => Math.abs(l.ppm - ppm) < 0.001)?.hex || defaultSampleHex);
+          const sig = lastReading?.[signalKey] ?? (tableList.find(l => Math.abs(l.ppm - ppm) < 0.001)?.[signalKey] || 0.0);
+          currentR.saveCalibrationLevel(ppm, refHex, sampleHex, sig);
+          renderCalibration();
+          if (lastFrame) {
+            updateReadout(currentR.processFrames([lastFrame]));
           }
+        });
+      });
+    }
+
+    function renderHistory() {
+      const currentReader = getReader();
+      if (!currentReader) return;
+      const history = currentReader.getHistory();
+      const tbody = document.querySelector(`#${prefix}HistoryBody`);
+      if (!tbody) return;
+
+      if (!history.length) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No readings yet.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = history.map((item) => {
+        const timeStr = item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+        const sigVal = item[signalKey] !== undefined ? item[signalKey] : item.signal;
+        const sigStr = typeof sigVal === 'number' ? (sigVal >= 0 ? `+${sigVal.toFixed(2)}` : sigVal.toFixed(2)) : '--';
+        const refColor = item.refHex || item.pristineHex || '--';
+        return `<tr>
+          <td>${timeStr}</td>
+          <td><code>${refColor}</code></td>
+          <td><code>${item.sampleHex || '--'}</code></td>
+          <td><strong style="color:${prefix === 'ps' ? '#a855f7' : '#38bdf8'};">${sigStr}</strong></td>
+          <td><code>${item.matchedTableHex || '--'}</code></td>
+          <td><strong>${item.range || (item.ppm !== null ? item.ppm + ' ppm' : '--')}</strong></td>
+        </tr>`;
+      }).join('');
+    }
+
+    function updateReadout(result) {
+      if (!result) return;
+      const currentReader = getReader();
+      lastReading = result;
+
+      const largePpm = document.querySelector(`#${prefix}EstimateLargePpm`);
+      if (largePpm) {
+        if (!result.valid) {
+          largePpm.textContent = result.refusalReason || 'Hold steady';
+          largePpm.style.color = 'var(--status-invalid-text, #f87171)';
+        } else {
+          largePpm.textContent = result.displayPpm || `${result.ppm} ppm`;
+          largePpm.style.color = 'var(--text-primary)';
         }
-        const lockBadge = document.querySelector('#bsCameraLockStatus');
-        if (lockBadge) {
-          lockBadge.textContent = locked ? 'AE/AWB: Locked' : 'AE/AWB: Auto';
-          lockBadge.className = `camera-lock-badge ${locked ? 'locked' : 'auto'}`;
+      }
+
+      if (result.valid) {
+        const pRef = document.querySelector(`#${prefix}RefHex`) || document.querySelector(`#${prefix}PristineHex`);
+        if (pRef) pRef.textContent = result.refHex || result.pristineHex || '--';
+        const pSmp = document.querySelector(`#${prefix}SampleHex`);
+        if (pSmp) pSmp.textContent = result.sampleHex || '--';
+        const pSig = document.querySelector(`#${prefix}DbVal`) || document.querySelector(`#${prefix}DLVal`);
+        const sigVal = result[signalKey] !== undefined ? result[signalKey] : result.signal;
+        if (pSig) pSig.textContent = typeof sigVal === 'number' ? (sigVal >= 0 ? `+${sigVal.toFixed(2)}` : sigVal.toFixed(2)) : '--';
+        const matchedHex = document.querySelector(`#${prefix}MatchedTableHex`);
+        if (matchedHex) matchedHex.textContent = result.matchedTableHex || '--';
+        const nearestPatch = document.querySelector(`#${prefix}NearestPatchVal`);
+        if (nearestPatch) nearestPatch.textContent = result.nearestPatchName || (result.nearestPatchPpm !== undefined ? `${result.nearestPatchPpm} ppm (${result.matchedTableHex})` : '--');
+
+        const refDot = document.querySelector(`#${prefix}RefDot`);
+        if (refDot && (result.refHex || result.pristineHex)) refDot.style.backgroundColor = result.refHex || result.pristineHex;
+        const smpDot = document.querySelector(`#${prefix}SampleDot`);
+        if (smpDot && result.sampleHex) smpDot.style.backgroundColor = result.sampleHex;
+        const tblDot = document.querySelector(`#${prefix}TableDot`);
+        if (tblDot && result.matchedTableHex) tblDot.style.backgroundColor = result.matchedTableHex;
+
+        if (currentReader) {
+          currentReader.addHistory({
+            timestamp: new Date().toISOString(),
+            refHex: result.refHex || result.pristineHex,
+            pristineHex: result.refHex || result.pristineHex,
+            sampleHex: result.sampleHex,
+            [signalKey]: sigVal,
+            matchedTableHex: result.matchedTableHex,
+            range: result.displayPpm || `${result.ppm} ppm`,
+            ppm: result.ppm,
+          });
+          renderHistory();
         }
       }
 
-      const frames = await captureBrownScale20Frames();
-      if (frames.length > 0) lastBrownScaleFrame = frames[0];
-      const result = bsReader.processBrownScaleFrames(frames);
-      updateBrownScaleReadout(result);
-    } catch (err) {
-      console.warn('Brown scale capture failed:', err);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = origText;
-    }
-  });
-
-  document.querySelector('#bsRepeatTestButton')?.addEventListener('click', async () => {
-    const bsReader = getBrownScaleReader();
-    if (!bsReader) return;
-    const btn = document.querySelector('#bsRepeatTestButton');
-    const origText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Running 10x...';
-
-    const card = document.querySelector('#bsRepeatTestCard');
-    const statusEl = document.querySelector('#bsRepeatStatus');
-    const dLMeanEl = document.querySelector('#bsDLMean');
-    const dLMinMaxEl = document.querySelector('#bsDLMinMax');
-    const ppmMeanEl = document.querySelector('#bsPpmMean');
-    const ppmMinMaxEl = document.querySelector('#bsPpmMinMax');
-
-    try {
-      const summary = await bsReader.runBrownScaleRepeatTest(captureBrownScale20Frames, 10);
-      if (summary && card) {
-        card.style.display = 'block';
-        if (statusEl) statusEl.textContent = `${summary.count}/10 Captures Valid`;
-        if (dLMeanEl) dLMeanEl.textContent = summary.dL.mean.toFixed(2);
-        if (dLMinMaxEl) dLMinMaxEl.textContent = `Min: ${summary.dL.min.toFixed(2)} / Max: ${summary.dL.max.toFixed(2)}`;
-        if (ppmMeanEl) ppmMeanEl.textContent = `${summary.ppm.mean.toFixed(1)} ppm`;
-        if (ppmMinMaxEl) ppmMinMaxEl.textContent = `Min: ${summary.ppm.min.toFixed(0)} / Max: ${summary.ppm.max.toFixed(0)} ppm`;
-      }
-    } catch (err) {
-      console.warn('Brown scale repeat test failed:', err);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = origText;
-    }
-  });
-
-  document.querySelector('#bsResetDefaultsBtn')?.addEventListener('click', () => {
-    const bsReader = getBrownScaleReader();
-    if (bsReader) {
-      bsReader.deleteCalibration();
-      renderBrownScaleCalibration();
-      if (lastBrownScaleFrame) {
-        updateBrownScaleReadout(bsReader.processBrownScaleFrames([lastBrownScaleFrame]));
+      const gUnif = document.querySelector(`#${prefix}GateUniformity`);
+      const gClip = document.querySelector(`#${prefix}GateClipping`);
+      const gRef = document.querySelector(`#${prefix}GateRefCheck`);
+      if (gUnif) gUnif.className = `gate-tag ${result.valid ? 'pass' : 'fail'}`;
+      if (gClip) gClip.className = `gate-tag ${result.valid ? 'pass' : 'fail'}`;
+      if (gRef) {
+        const delta = result.deltaERef !== undefined ? result.deltaERef : result.deltaEPris;
+        if (delta !== undefined) {
+          gRef.className = `gate-tag ${delta <= 25 ? 'pass' : 'fail'}`;
+          gRef.textContent = `Reference check (${refHexDefault}): ${delta <= 25 ? 'Pass' : 'Warning'}`;
+        } else {
+          gRef.className = 'gate-tag pass';
+          gRef.textContent = `Reference check (${refHexDefault}): Pass`;
+        }
       }
     }
-  });
 
-  document.querySelector('#bsDeleteCalibrationBtn')?.addEventListener('click', () => {
-    const bsReader = getBrownScaleReader();
-    if (bsReader) {
-      bsReader.deleteCalibration();
-      renderBrownScaleCalibration();
-      if (lastBrownScaleFrame) {
-        updateBrownScaleReadout(bsReader.processBrownScaleFrames([lastBrownScaleFrame]));
+    async function capture20Frames() {
+      const pageVideo = document.querySelector(`#${prefix}CameraFeed`);
+      const mainVideo = document.querySelector('#cameraFeed');
+      const video = (pageVideo && !pageVideo.paused && pageVideo.readyState >= 2 && pageVideo.videoWidth > 0)
+        ? pageVideo
+        : mainVideo;
+      const frames = [];
+      const isVideoActive = video && !video.paused && video.readyState >= 2 && video.videoWidth > 0;
+
+      for (let i = 0; i < 20; i++) {
+        if (isVideoActive) {
+          const c = document.createElement('canvas');
+          c.width = video.videoWidth;
+          c.height = video.videoHeight;
+          c.getContext('2d').drawImage(video, 0, 0);
+          frames.push(c);
+        } else if (lastFrame) {
+          frames.push(lastFrame);
+        } else {
+          const currentReader = getReader();
+          const testCanvas = currentReader ? currentReader.createBadgeCanvas({ samplePpm: defaultTestPpm }) : null;
+          if (testCanvas) frames.push(testCanvas);
+        }
       }
+      return frames;
     }
-  });
 
-  document.querySelector('#bsDeleteAllHistoryBtn')?.addEventListener('click', () => {
-    const bsReader = getBrownScaleReader();
-    if (bsReader) {
-      bsReader.deleteAllHistory();
-      renderBrownScaleHistory();
-    }
-  });
+    document.querySelector(`#${prefix}TestBadgeButton`)?.addEventListener('click', () => {
+      const currentReader = getReader();
+      if (!currentReader) return;
+      const select = document.querySelector(`#${prefix}TestPpmSelect`);
+      const ppm = Number(select?.value || defaultTestPpm);
+      const canvas = currentReader.createBadgeCanvas({ samplePpm: ppm });
+      lastFrame = canvas;
 
-  document.querySelector('#bsUploadButton')?.addEventListener('click', () => {
-    const input = document.querySelector('#bsImageInput');
-    if (input) {
-      input.value = '';
-      input.click();
-    }
-  });
-
-  document.querySelector('#bsImageInput')?.addEventListener('change', () => {
-    const input = document.querySelector('#bsImageInput');
-    const file = input?.files?.[0];
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      const c = document.createElement('canvas');
-      c.width = img.naturalWidth || img.width;
-      c.height = img.naturalHeight || img.height;
-      c.getContext('2d').drawImage(img, 0, 0);
-      lastBrownScaleFrame = c;
-
-      const preview = document.querySelector('#bsUploadedPreview');
-      const placeholder = document.querySelector('#bsCameraPlaceholder');
-      const video = document.querySelector('#bsCameraFeed');
+      const preview = document.querySelector(`#${prefix}UploadedPreview`);
+      const placeholder = document.querySelector(`#${prefix}CameraPlaceholder`);
+      const video = document.querySelector(`#${prefix}CameraFeed`);
       if (placeholder) placeholder.style.display = 'none';
       if (video) video.style.display = 'none';
       if (preview) {
-        preview.src = url;
+        preview.src = canvas.toDataURL('image/jpeg');
         preview.style.display = 'block';
       }
 
-      const bsReader = getBrownScaleReader();
-      if (bsReader) {
-        const result = bsReader.processBrownScaleFrames([c]);
-        updateBrownScaleReadout(result);
+      const stateEl = document.querySelector(`#${prefix}CameraState`);
+      if (stateEl) stateEl.textContent = `TEST BADGE (${ppm} PPM)`;
+
+      const result = currentReader.processFrames([canvas]);
+      updateReadout(result);
+    });
+
+    document.querySelector(`#${prefix}CaptureButton`)?.addEventListener('click', async () => {
+      const currentReader = getReader();
+      if (!currentReader) return;
+      const btn = document.querySelector(`#${prefix}CaptureButton`);
+      const origText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Capturing 20 frames...';
+
+      try {
+        if (cameraStream) {
+          const track = cameraStream.getVideoTracks()[0];
+          let locked = false;
+          if (track?.getCapabilities && track?.applyConstraints) {
+            try {
+              const caps = track.getCapabilities() || {};
+              const adv = {};
+              if (caps.exposureMode?.includes('manual')) adv.exposureMode = 'manual';
+              if (caps.whiteBalanceMode?.includes('manual')) adv.whiteBalanceMode = 'manual';
+              if (Object.keys(adv).length > 0) {
+                await track.applyConstraints({ advanced: [adv] });
+                locked = true;
+              }
+            } catch (e) {
+              locked = false;
+            }
+          }
+          const lockBadge = document.querySelector(`#${prefix}CameraLockStatus`);
+          if (lockBadge) {
+            lockBadge.textContent = locked ? 'AE/AWB: Locked' : 'AE/AWB: Auto';
+            lockBadge.className = `camera-lock-badge ${locked ? 'locked' : 'auto'}`;
+          }
+        }
+
+        const frames = await capture20Frames();
+        if (frames.length > 0) lastFrame = frames[0];
+        const result = currentReader.processFrames(frames);
+        updateReadout(result);
+      } catch (err) {
+        console.warn(`${prefix} capture failed:`, err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
       }
-    };
-    img.src = url;
+    });
+
+    document.querySelector(`#${prefix}RepeatTestButton`)?.addEventListener('click', async () => {
+      const currentReader = getReader();
+      if (!currentReader) return;
+      const btn = document.querySelector(`#${prefix}RepeatTestButton`);
+      const origText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Running 10x...';
+
+      const card = document.querySelector(`#${prefix}RepeatTestCard`);
+      const statusEl = document.querySelector(`#${prefix}RepeatStatus`);
+      const sigMeanEl = document.querySelector(`#${prefix}DbMean`) || document.querySelector(`#${prefix}DLMean`);
+      const sigMinMaxEl = document.querySelector(`#${prefix}DbMinMax`) || document.querySelector(`#${prefix}DLMinMax`);
+      const ppmMeanEl = document.querySelector(`#${prefix}PpmMean`);
+      const ppmMinMaxEl = document.querySelector(`#${prefix}PpmMinMax`);
+
+      try {
+        const summary = await currentReader.runRepeatTest(capture20Frames, 10);
+        if (summary && card) {
+          card.style.display = 'block';
+          if (statusEl) statusEl.textContent = `${summary.count}/10 Captures Valid`;
+          const sObj = summary[signalKey] || summary.dL || summary.db;
+          if (sigMeanEl && sObj) sigMeanEl.textContent = sObj.mean.toFixed(2);
+          if (sigMinMaxEl && sObj) sigMinMaxEl.textContent = `Min: ${sObj.min.toFixed(2)} / Max: ${sObj.max.toFixed(2)}`;
+          if (ppmMeanEl) ppmMeanEl.textContent = `${summary.ppm.mean.toFixed(prefix === 'ps' ? 2 : 1)} ppm`;
+          if (ppmMinMaxEl) ppmMinMaxEl.textContent = `Min: ${summary.ppm.min.toFixed(prefix === 'ps' ? 2 : 0)} / Max: ${summary.ppm.max.toFixed(prefix === 'ps' ? 2 : 0)} ppm`;
+        }
+      } catch (err) {
+        console.warn(`${prefix} repeat test failed:`, err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    });
+
+    document.querySelector(`#${prefix}ResetDefaultsBtn`)?.addEventListener('click', () => {
+      const currentReader = getReader();
+      if (currentReader) {
+        currentReader.deleteCalibration();
+        renderCalibration();
+        if (lastFrame) {
+          updateReadout(currentReader.processFrames([lastFrame]));
+        }
+      }
+    });
+
+    document.querySelector(`#${prefix}DeleteCalibrationBtn`)?.addEventListener('click', () => {
+      const currentReader = getReader();
+      if (currentReader) {
+        currentReader.deleteCalibration();
+        renderCalibration();
+        if (lastFrame) {
+          updateReadout(currentReader.processFrames([lastFrame]));
+        }
+      }
+    });
+
+    document.querySelector(`#${prefix}DeleteAllHistoryBtn`)?.addEventListener('click', () => {
+      const currentReader = getReader();
+      if (currentReader) {
+        currentReader.deleteAllHistory();
+        renderHistory();
+      }
+    });
+
+    document.querySelector(`#${prefix}UploadButton`)?.addEventListener('click', () => {
+      const input = document.querySelector(`#${prefix}ImageInput`);
+      if (input) {
+        input.value = '';
+        input.click();
+      }
+    });
+
+    document.querySelector(`#${prefix}ImageInput`)?.addEventListener('change', () => {
+      const input = document.querySelector(`#${prefix}ImageInput`);
+      const file = input?.files?.[0];
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth || img.width;
+        c.height = img.naturalHeight || img.height;
+        c.getContext('2d').drawImage(img, 0, 0);
+        lastFrame = c;
+
+        const preview = document.querySelector(`#${prefix}UploadedPreview`);
+        const placeholder = document.querySelector(`#${prefix}CameraPlaceholder`);
+        const video = document.querySelector(`#${prefix}CameraFeed`);
+        if (placeholder) placeholder.style.display = 'none';
+        if (video) video.style.display = 'none';
+        if (preview) {
+          preview.src = url;
+          preview.style.display = 'block';
+        }
+
+        const currentReader = getReader();
+        if (currentReader) {
+          const result = currentReader.processFrames([c]);
+          updateReadout(result);
+        }
+      };
+      img.src = url;
+    });
+
+    document.querySelector(`#${navBtnId}`)?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const workspace = document.querySelector('.workspace');
+      const brownScalePage = document.querySelector('#brownScalePage');
+      const purpleScalePage = document.querySelector('#purpleScalePage');
+      if (workspace) workspace.style.display = 'none';
+      if (brownScalePage) brownScalePage.style.display = pageId === 'brownScalePage' ? 'block' : 'none';
+      if (purpleScalePage) purpleScalePage.style.display = pageId === 'purpleScalePage' ? 'block' : 'none';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+
+      const pageVideo = document.querySelector(`#${prefix}CameraFeed`);
+      const placeholder = document.querySelector(`#${prefix}CameraPlaceholder`);
+      if (pageVideo && cameraStream) {
+        pageVideo.srcObject = cameraStream;
+        pageVideo.style.display = 'block';
+        if (placeholder) placeholder.style.display = 'none';
+        try { pageVideo.play(); } catch (err) {}
+      }
+      document.querySelectorAll('.nav-pill-btn').forEach((b) => b.classList.remove('active'));
+      document.querySelector(`#${navBtnId}`)?.classList.add('active');
+    });
+
+    renderCalibration();
+    renderHistory();
+  }
+
+  // Initialize both split scale modules
+  setupSplitScaleController({
+    prefix: 'bs',
+    getReader: getBrownScaleReader,
+    signalKey: 'dL',
+    refHexDefault: '#C4C3BF',
+    defaultSampleHex: '#8F5346',
+    defaultTestPpm: 20,
+    pageId: 'brownScalePage',
+    navBtnId: 'navBrownScale',
   });
 
-  renderBrownScaleCalibration();
-  renderBrownScaleHistory();
-
-  document.querySelector('#navBrownScale')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    const workspace = document.querySelector('.workspace');
-    const brownScalePage = document.querySelector('#brownScalePage');
-    if (workspace) workspace.style.display = 'none';
-    if (brownScalePage) {
-      brownScalePage.style.display = 'block';
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      const bsVideo = document.querySelector('#bsCameraFeed');
-      const bsPlaceholder = document.querySelector('#bsCameraPlaceholder');
-      if (bsVideo && cameraStream) {
-        bsVideo.srcObject = cameraStream;
-        bsVideo.style.display = 'block';
-        if (bsPlaceholder) bsPlaceholder.style.display = 'none';
-        try { bsVideo.play(); } catch (err) {}
-      }
-    }
-    document.querySelectorAll('.nav-pill-btn').forEach((b) => b.classList.remove('active'));
-    document.querySelector('#navBrownScale')?.classList.add('active');
+  setupSplitScaleController({
+    prefix: 'ps',
+    getReader: getPurpleScaleReader,
+    signalKey: 'db',
+    refHexDefault: '#C27FB9',
+    defaultSampleHex: '#91668A',
+    defaultTestPpm: 2.5,
+    pageId: 'purpleScalePage',
+    navBtnId: 'navPurpleScale',
   });
 
   window.addEventListener('beforeunload', () => cameraStream?.getTracks().forEach((track) => track.stop()));
