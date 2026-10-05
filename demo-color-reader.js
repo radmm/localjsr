@@ -841,6 +841,28 @@
   }
 
   /**
+   * Lock exposure and white balance via applyConstraints where supported, show whether locked.
+   */
+  async function lockCameraConstraints(track) {
+    if (!track || !track.getCapabilities || !track.applyConstraints) {
+      return { supported: false, locked: false, label: 'AE/AWB: Unsupported' };
+    }
+    try {
+      const caps = track.getCapabilities() || {};
+      const adv = {};
+      if (caps.exposureMode?.includes('manual')) adv.exposureMode = 'manual';
+      if (caps.whiteBalanceMode?.includes('manual')) adv.whiteBalanceMode = 'manual';
+      if (Object.keys(adv).length === 0) {
+        return { supported: false, locked: false, label: 'AE/AWB: Auto' };
+      }
+      await track.applyConstraints({ advanced: [adv] });
+      return { supported: true, locked: true, label: 'AE/AWB: Locked' };
+    } catch (e) {
+      return { supported: true, locked: false, label: 'AE/AWB: Auto (Lock Failed)' };
+    }
+  }
+
+  /**
    * Run Repeat Test for Demo Mode: 10 captures, compute mean, min, max of db and ppm
    */
   async function runDemoRepeatTest(captureFunction, count = 10) {
@@ -1030,6 +1052,7 @@
     evaluatePatchGates,
     checkDemoQualityGates,
     sampleDemoCanvas,
+    lockCameraConstraints,
     processDemoFrames,
     runDemoRepeatTest,
     getDemoHistory,
