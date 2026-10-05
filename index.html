@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -8,7 +8,7 @@
   <title>H2S Badge Reader</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png">
@@ -74,61 +74,54 @@
             <div class="camera-state" id="cameraState">Rear camera active</div>
           </div>
 
-          <!-- Plain single tip line under the viewfinder -->
-          <div class="viewfinder-tip" id="viewfinderTip">Place the badge so the six squares sit on the dots.</div>
-
           <div class="capture-actions">
-            <!-- Capture is the ONLY filled button -->
+            <!-- Capture is the primary filled button -->
             <button class="capture-button" id="captureButton" type="button">
-              <span></span> Capture 15 frames
+              <span></span> Analyze badge
             </button>
-            <button class="secondary-button" id="uploadButton" type="button">Upload image</button>
+            <button class="secondary-button" id="uploadButton" type="button">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Upload photo
+            </button>
             <input id="imageInput" type="file" accept="image/*" hidden>
             <button class="secondary-button" id="rotateButton" type="button">Rotate grid 90°</button>
-
-            <!-- Auto capture toggle (on by default) -->
-            <label class="auto-capture-toggle" title="Auto capture when steady for 1 second">
-              <input type="checkbox" id="autoCaptureToggle" checked>
-              <span>Auto capture</span>
-            </label>
           </div>
 
-          <!-- GUIDED LEARN THIS BADGE PANEL -->
-          <div class="guided-learn-panel" id="guidedLearnPanel" hidden>
-            <div class="guided-header">
-              <div>
-                <span class="step-badge" id="learnStepTag" hidden>Step 1 of 4</span>
-                <h3 id="learnGuideHeading">Hold the 10 ppm badge in the frame.</h3>
+          <!-- DEDICATED ADD PPM / CALIBRATION SECTION -->
+          <div class="add-ppm-card" id="addPpmCard">
+            <div class="add-ppm-header">
+              <span class="icon-glow glow-purple">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              </span>
+              <div class="add-ppm-header-text">
+                <strong class="add-ppm-heading">Add PPM concentration</strong>
+                <p class="add-ppm-desc">Calibrate badge color from uploaded training photo or live camera</p>
               </div>
-              <button class="text-button" id="closeLearnPanelBtn" type="button">Cancel</button>
             </div>
-            <div class="guided-body">
-              <div class="guided-row">
-                <label for="learnPpmSelect">Target concentration:
-                  <select id="learnPpmSelect">
-                    <option value="10">10 ppm</option>
-                    <option value="20">20 ppm</option>
-                    <option value="40">40 ppm</option>
-                    <option value="50">50 ppm</option>
-                    <option value="custom">Custom...</option>
-                  </select>
-                </label>
-                <input type="number" id="learnCustomPpmInput" placeholder="ppm" min="1" max="200" style="display:none;width:80px;">
-                <button class="secondary-button" id="learnSkipBtn" type="button" style="display:none;">Skip</button>
+
+            <div class="add-ppm-controls">
+              <div class="ppm-input-group">
+                <input id="learnPpmInput" type="number" placeholder="Enter ppm (e.g. 10, 20, 30)" min="1" max="100">
+                <span class="ppm-group-unit">PPM</span>
               </div>
-              <div class="guided-feedback" id="guidedFeedback" hidden>
-                <span class="check-icon">✓</span> <strong id="guidedFeedbackText">Learned 10 ppm</strong>
-              </div>
+              <button class="action-button-accent" id="learnBadgeBtn" type="button">
+                + Add PPM
+              </button>
+            </div>
+
+            <div id="learnFeedback" class="learn-feedback" hidden></div>
+
+            <div class="active-templates-row">
+              <span class="templates-label">Configured PPMs:</span>
+              <div id="learnedTemplatesList" class="templates-chip-group"></div>
             </div>
           </div>
 
           <!-- Secondary / Utility text buttons -->
           <div class="sub-actions">
-            <button class="text-button" id="debugToggleBtn" type="button">Debug</button>
-            <button class="text-button" id="learnBadgeBtn" type="button">Learn this badge</button>
-            <button class="text-button" id="calibrateAllBtn" type="button">Calibrate all</button>
+            <button class="text-button" id="debugToggleBtn" type="button">Debug ROI</button>
             <button class="text-button" id="repeatTestBtn" type="button">Repeat test (5x)</button>
-            <button class="text-button destructive" id="resetLearnedBtn" type="button">Reset to defaults</button>
+            <button class="text-button destructive" id="resetLearnedBtn" type="button">Reset templates to defaults</button>
           </div>
 
           <div id="repeatTestResults" class="repeat-test-banner" hidden></div>
@@ -165,7 +158,6 @@
               <div class="match-badge-wrap">
                 <span class="confidence-chip" id="confidenceValue">--</span>
                 <span class="class-chip" id="classValue">Class --</span>
-                <span class="quality-badge yellow" id="qualityNoteBadge" style="display:none;">Low quality</span>
               </div>
             </div>
 
@@ -183,21 +175,16 @@
                 <div class="detail-row"><span>S2 measured / matched:</span><strong id="detailS2Hex">--</strong></div>
                 <div class="detail-row"><span>R3 lighting gains (RGB):</span><strong id="detailGains">--</strong></div>
                 <div class="detail-row"><span>Distances (d1 / d2):</span><strong id="detailDistances">--</strong></div>
-                <div class="detail-row"><span>Patch quality (usable %):</span><strong id="detailPatchUsability">--</strong></div>
               </div>
             </details>
           </div>
         </div>
 
         <div class="retake-content" id="retakeContent" hidden>
-          <div class="friendly-error-card">
-            <span class="friendly-icon">💡</span>
-            <div class="friendly-error-body">
-              <strong id="retakeHeading">Could not read badge</strong>
-              <p id="retakeMessage">Hold the badge steady inside the rectangular guide.</p>
-              <p class="friendly-tip" id="retakeTip"></p>
-              <button class="secondary-button" id="tryAgainBtn" type="button" style="margin-top:10px;">Try again</button>
-            </div>
+          <span class="empty-icon">!</span>
+          <div>
+            <strong>Retake photo</strong>
+            <p id="retakeMessage">Capture quality check failed.</p>
           </div>
         </div>
       </section>

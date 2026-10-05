@@ -17,7 +17,7 @@ const BADGE_CONFIG = {
   sampleCenterFraction: 0.30, // sample center 30% of each patch (avoids edge bleed)
   r3TargetHex: '#C4C3BF',
   r3TargetRgb: [196, 195, 191],
-  gainLimits: [0.45, 2.2],
+  gainLimits: [0.5, 2.0],
   patchBoxSize: { w: 0.22, h: 0.16 }, // fraction of guide rectangle
   patches: {
     R1: { id: 'R1', col: 'REF', row: 1, name: 'pink', x: 0.22, y: 0.12, defaultHex: '#CD8290' },
@@ -35,14 +35,14 @@ const BADGE_CONFIG = {
   },
   weights: { L: 0.5, a: 1.0, b: 1.5 },
   thresholds: {
-    maxLuminanceStd: 24.0,
-    maxClippedFraction: 0.12,
-    maxFrameSpread: 16.0,
-    s1MinLabB: 25.0,
-    s1MinLabL: 40.0,
-    noMatchDist: 26.0,
-    lowConfidenceDist: 16.0,
-    lowConfidenceDiff: 2.0,
+    maxLuminanceStd: 18.0, // Balanced quality check: catches non-uniformity without failing good training pics
+    maxClippedFraction: 0.06, // Balanced: 6% threshold prevents blowout while ignoring minor single-pixel noise
+    maxFrameSpread: 12.0, // Balanced: detects camera movement while tolerating steady handheld shots
+    s1MinLabB: 32.0, // Strictly checks for yellow S1 badge patch presence
+    s1MinLabL: 50.0, // Strictly checks for adequate illumination
+    noMatchDist: 20.0, // Class match distance ceiling
+    lowConfidenceDist: 14.0,
+    lowConfidenceDiff: 3.0,
   },
 };
 
@@ -1119,7 +1119,7 @@ function initBrowser() {
         if (ph) ph.style.display = 'none';
 
         const stateEl = document.querySelector('#cameraState');
-        if (stateEl) stateEl.textContent = 'Uploaded image ready';
+        if (stateEl) stateEl.textContent = 'Photo loaded • Ready to analyze or add PPM';
 
         const canvas = document.createElement('canvas');
         canvas.width = preview.naturalWidth;
@@ -1128,19 +1128,23 @@ function initBrowser() {
         ctx.drawImage(preview, 0, 0);
 
         lastCapturedFrames = [canvas];
-        const reading = captureBadgeReading([canvas], { rotated: isRotated });
-        lastReading = reading;
+        
+        // NO auto-capture: wait for user to click "Analyze badge" or "+ Add PPM"
 
-        if (!reading.valid) {
-          showRefusal(reading.refusalReason);
-        } else {
-          saveRecord(reading);
-          renderRecords();
-          showResult(reading);
+        // Clear any previous retake refusal
+        const retakeContent = document.querySelector('#retakeContent');
+        if (retakeContent) retakeContent.hidden = true;
+        const resultEmpty = document.querySelector('#resultEmpty');
+        if (resultEmpty) {
+          resultEmpty.hidden = false;
+          const p = resultEmpty.querySelector('p');
+          if (p) p.textContent = 'Photo ready. Click "Analyze badge" or enter PPM below to add.';
         }
+        const resultContent = document.querySelector('#resultContent');
+        if (resultContent) resultContent.hidden = true;
 
         if (isDebugActive) {
-          drawDebugOverlay(canvas, reading, isRotated);
+          drawDebugOverlay(canvas, null, isRotated);
         }
       };
       preview.src = event.target.result;
@@ -1184,14 +1188,46 @@ function initBrowser() {
     }
   });
 
-  // Learn This Badge
+  // Helper: Render Configured / Learned Templates list
+  function renderLearnedTemplatesList() {
+    const listEl = document.querySelector('#learnedTemplatesList');
+    if (!listEl) return;
+    const learned = getLearnedTemplates();
+    const combined = getCombinedTemplates();
+    const allPpms = Object.keys(combined).map(Number).sort((a, b) => a - b);
+
+    listEl.innerHTML = allPpms.map((ppm) => {
+      const isCustom = Boolean(learned[ppm]);
+      return `<span class="template-chip ${isCustom ? 'custom' : 'factory'}" title="S3: ${combined[ppm].s3Hex}, S2: ${combined[ppm].s2Hex}">
+        <span class="chip-dot"></span>
+        <span class="chip-val">${ppm} ppm</span>
+        ${isCustom ? '<span class="chip-badge">Trained</span>' : ''}
+      </span>`;
+    }).join('');
+  }
+
+  // Helper: Show Feedback in Add PPM card
+  function showLearnFeedback(message, type = 'info') {
+    const el = document.querySelector('#learnFeedback');
+    if (!el) return;
+    el.hidden = false;
+    el.className = `learn-feedback ${type}`;
+    el.textContent = message;
+    if (type === 'success') {
+      setTimeout(() => {
+        if (el) el.hidden = true;
+      }, 6000);
+    }
+  }
+
+  // Add PPM / Learn This Badge
   const learnBtn = document.querySelector('#learnBadgeBtn');
   const learnInput = document.querySelector('#learnPpmInput');
 
   learnBtn?.addEventListener('click', async () => {
     const val = Number(learnInput?.value);
     if (isNaN(val) || val <= 0) {
-      alert('Please enter a valid ppm concentration (e.g. 10, 20, 30, 50).');
+      showLearnFeedback('Please enter a valid PPM concentration (e.g. 10, 20, 30, 50).', 'error');
       return;
     }
 
@@ -1201,22 +1237,23 @@ function initBrowser() {
     }
 
     if (!frames) {
-      alert('Capture or upload a badge first to learn its color fingerprint.');
+      showLearnFeedback('Upload a photo or point camera at badge to add PPM.', 'error');
       return;
     }
 
     const reading = captureBadgeReading(frames, { rotated: isRotated });
     if (!reading.valid) {
       showRefusal(reading.refusalReason);
-      alert(`Cannot learn badge: ${reading.refusalReason}`);
+      showLearnFeedback(`Quality check failed: ${reading.refusalReason}. Adjust alignment or lighting and try again.`, 'error');
       return;
     }
 
     saveLearnedTemplate(val, reading.s3Hex, reading.s2Hex);
-    alert(`Learned ${val} ppm badge fingerprint: S3 ${reading.s3Hex}, S2 ${reading.s2Hex}`);
+    showLearnFeedback(`✓ Added ${val} ppm badge template! S3: ${reading.s3Hex}, S2: ${reading.s2Hex}`, 'success');
     learnInput.value = '';
+    renderLearnedTemplatesList();
 
-    // Re-evaluate with learned templates
+    // Re-evaluate with newly learned templates and show result
     const rechecked = captureBadgeReading(frames, { rotated: isRotated });
     if (rechecked.valid) {
       showResult(rechecked);
@@ -1226,11 +1263,15 @@ function initBrowser() {
   // Reset to defaults
   const resetBtn = document.querySelector('#resetLearnedBtn');
   resetBtn?.addEventListener('click', () => {
-    showConfirmDialog('Reset all learned badges to defaults? This can\'t be undone.', () => {
+    showConfirmDialog('Reset all learned badges to factory defaults? This can\'t be undone.', () => {
       resetLearnedTemplates();
-      alert('Learned badges reset to factory defaults.');
+      renderLearnedTemplatesList();
+      showLearnFeedback('Learned badges reset to factory defaults.', 'info');
     });
   });
+
+  // Render templates on startup
+  renderLearnedTemplatesList();
 
   // Repeat Test (5 captures, show class counts and min and max ppm)
   const repeatBtn = document.querySelector('#repeatTestBtn');
