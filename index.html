@@ -100,6 +100,8 @@
               <div id="demoStabilityBadge" class="stability-badge stable">
                 <span id="demoStabilityText">Stable (spread: ±0.0)</span>
               </div>
+              <div id="demoCameraLockStatus" class="camera-lock-badge auto">AE/AWB: Auto</div>
+              <button class="secondary-button" id="demoRepeatTestButton" type="button" style="height:36px;font-size:12px;padding:0 12px;">Repeat test (10x)</button>
               <button class="secondary-button" id="demoTestBadgeButton" type="button" style="height:36px;font-size:12px;padding:0 12px;">Load 2-patch demo badge</button>
             </div>
           </div>
@@ -126,6 +128,12 @@
                 </div>
               </div>
               <div class="demo-meta-item">
+                <small>Differential db (b*smp - b*ref)</small>
+                <div class="hex-badge-row">
+                  <strong class="demo-meta-value" id="demoDbVal" style="font-size:13px;color:#38bdf8;">--</strong>
+                </div>
+              </div>
+              <div class="demo-meta-item">
                 <small>Matched chart hex</small>
                 <div class="hex-badge-row">
                   <span class="color-dot" id="demoChartDot"></span>
@@ -136,6 +144,44 @@
                 <small>Distance</small>
                 <strong class="demo-meta-value" id="demoMatchDistance">--</strong>
               </div>
+            </div>
+          </div>
+
+          <!-- Demo Repeat Test Diagnostics Card -->
+          <div class="demo-repeat-card" id="demoRepeatTestCard" style="display:none;margin-top:12px;padding:12px;background:var(--surface-color, #1e293b);border-radius:8px;border:1px solid var(--border-color, #334155);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <strong style="font-size:13px;">Repeat test results (10 captures)</strong>
+              <span class="gate-tag pass" id="demoRepeatStatus">Completed</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:8px;font-size:12px;">
+              <div><small style="color:var(--text-muted);display:block;">db Mean</small><strong id="demoDbMean">--</strong></div>
+              <div><small style="color:var(--text-muted);display:block;">db Min / Max</small><span id="demoDbMinMax">--</span></div>
+              <div><small style="color:var(--text-muted);display:block;">ppm Mean</small><strong id="demoPpmMean">--</strong></div>
+              <div><small style="color:var(--text-muted);display:block;">ppm Min / Max</small><span id="demoPpmMinMax">--</span></div>
+            </div>
+          </div>
+
+          <!-- Demo History Card -->
+          <div class="demo-history-card" id="demoHistoryCard" style="margin-top:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <strong style="font-size:13px;">Recent demo readings (last 10)</strong>
+              <button class="text-button danger-text" id="demoDeleteHistoryBtn" type="button" style="font-size:11px;">Clear history</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Ref hex</th>
+                    <th>Sample hex</th>
+                    <th>db</th>
+                    <th>Estimate range</th>
+                  </tr>
+                </thead>
+                <tbody id="demoHistoryBody">
+                  <tr class="empty-row"><td colspan="5">No demo readings recorded yet.</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
 
@@ -307,6 +353,197 @@
       </section>
     </section>
 
+    <!-- DEDICATED PAGE: BROWN SCALE READER -->
+    <section class="brown-scale-page" id="brownScalePage" style="display:none;padding:16px 20px 80px;max-width:1120px;margin:0 auto;">
+      <div class="page-heading">
+        <p class="eyebrow">Dedicated module / Brown scale</p>
+        <h1>Brown scale reader</h1>
+        <p class="lede">Pristine reference (0 ppm, #C4C3BF) vs sample patch. dL differential colorimetry with on-device calibration.</p>
+      </div>
+
+      <section class="capture-layout">
+        <div class="capture-panel" id="bsCaptureSection">
+          <div class="camera-frame" id="bsCameraFrame">
+            <video id="bsCameraFeed" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:cover;"></video>
+            <img id="bsUploadedPreview" style="display:none;width:100%;height:100%;object-fit:contain;position:absolute;inset:0;" alt="Brown scale preview">
+            <div class="camera-placeholder" id="bsCameraPlaceholder">
+              <strong>Camera / preview</strong>
+              <span>Tap to preview camera or load test badge</span>
+            </div>
+            <!-- Vertically split guide: Left Pristine REF, Right Sample -->
+            <div class="bs-badge-guide" id="bsBadgeGuide" aria-hidden="true">
+              <div class="bs-guide-half bs-guide-left">
+                <span>Pristine REF (0 ppm)</span>
+                <div class="bs-guide-sample-box">Center 40%</div>
+              </div>
+              <div class="bs-guide-divider"></div>
+              <div class="bs-guide-half bs-guide-right">
+                <span>SAMPLE PATCH</span>
+                <div class="bs-guide-sample-box">Center 40%</div>
+              </div>
+            </div>
+            <div class="camera-state" id="bsCameraState">Ready</div>
+            <div id="bsCameraLockStatus" class="camera-lock-badge auto" style="position:absolute;top:8px;right:8px;">AE/AWB: Auto</div>
+          </div>
+
+          <div class="capture-actions" style="flex-wrap:wrap;gap:8px;">
+            <button class="capture-button" id="bsCaptureButton" type="button">Capture 20 frames</button>
+            <button class="secondary-button" id="bsRepeatTestButton" type="button">Repeat test (10x)</button>
+            <button class="secondary-button" id="bsTestBadgeButton" type="button">Load test badge</button>
+            <button class="secondary-button" id="bsUploadButton" type="button">Upload image</button>
+            <input id="bsImageInput" type="file" accept="image/*" hidden>
+          </div>
+
+          <div class="bs-controls-bar" style="margin-top:12px;display:flex;align-items:center;gap:8px;font-size:12px;">
+            <span style="color:var(--text-muted);">Test badge level:</span>
+            <select id="bsTestPpmSelect" class="secondary-button" style="height:32px;padding:0 8px;font-size:12px;cursor:pointer;">
+              <option value="0">0 ppm Pristine (#C4C3BF)</option>
+              <option value="1">1 ppm (#C9A793)</option>
+              <option value="5">5 ppm (#C39782)</option>
+              <option value="10">10 ppm (#B17762)</option>
+              <option value="20" selected>20 ppm (#8F5346)</option>
+              <option value="50">50 ppm (#6C463E)</option>
+              <option value="100">100 ppm (#4D3837)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Result Card -->
+        <aside class="session-panel" id="bsResultSection">
+          <div class="panel-header"><span>Estimate, color match</span></div>
+          <div class="demo-summary-top">
+            <span class="eyebrow" id="bsEstimateLabel">Estimate, color match</span>
+            <div class="demo-estimate-large" id="bsEstimateLargePpm">-- ppm</div>
+          </div>
+
+          <div class="demo-color-meta-grid" style="margin-top:12px;">
+            <div class="demo-meta-item">
+              <small>Pristine hex</small>
+              <div class="hex-badge-row">
+                <span class="color-dot" id="bsRefDot" style="background-color:#C4C3BF;"></span>
+                <code id="bsPristineHex">#C4C3BF</code>
+              </div>
+            </div>
+            <div class="demo-meta-item">
+              <small>Sample hex</small>
+              <div class="hex-badge-row">
+                <span class="color-dot" id="bsSampleDot"></span>
+                <code id="bsSampleHex">--</code>
+              </div>
+            </div>
+            <div class="demo-meta-item">
+              <small>dL (L*ref - L*smp)</small>
+              <strong class="demo-meta-value" id="bsDLVal" style="color:#38bdf8;">--</strong>
+            </div>
+            <div class="demo-meta-item">
+              <small>Matched table hex</small>
+              <div class="hex-badge-row">
+                <span class="color-dot" id="bsTableDot"></span>
+                <code id="bsMatchedTableHex">--</code>
+              </div>
+            </div>
+            <div class="demo-meta-item">
+              <small>Nearest labeled patch</small>
+              <strong class="demo-meta-value" id="bsNearestPatchVal">--</strong>
+            </div>
+            <div class="demo-meta-item">
+              <small>Active table</small>
+              <span id="bsProfileStatus" class="gate-tag pass">Default table</span>
+            </div>
+          </div>
+
+          <!-- Quality Gates -->
+          <div style="margin-top:12px;border-top:1px solid var(--border-color);padding-top:8px;">
+            <small style="color:var(--text-muted);display:block;margin-bottom:6px;">Quality gates:</small>
+            <div id="bsQualityGates" style="display:flex;flex-direction:column;gap:4px;">
+              <span class="gate-tag pass" id="bsGateUniformity">Uniformity: Pass</span>
+              <span class="gate-tag pass" id="bsGateClipping">Clipping: Pass</span>
+              <span class="gate-tag pass" id="bsGateRefCheck">Reference check (#C4C3BF): Pass</span>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <!-- Repeat test diagnostics -->
+      <section class="demo-repeat-card" id="bsRepeatTestCard" style="display:none;margin-top:16px;padding:16px;background:var(--surface-color, #1e293b);border-radius:8px;border:1px solid var(--border-color, #334155);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <h3 style="font-size:14px;margin:0;">Repeat test diagnostics (10 captures)</h3>
+          <span class="gate-tag pass" id="bsRepeatStatus">Completed</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:12px;font-size:12px;">
+          <div><small style="color:var(--text-muted);display:block;">dL Mean</small><strong id="bsDLMean">--</strong></div>
+          <div><small style="color:var(--text-muted);display:block;">dL Min / Max</small><span id="bsDLMinMax">--</span></div>
+          <div><small style="color:var(--text-muted);display:block;">ppm Mean</small><strong id="bsPpmMean">--</strong></div>
+          <div><small style="color:var(--text-muted);display:block;">ppm Min / Max</small><span id="bsPpmMinMax">--</span></div>
+        </div>
+      </section>
+
+      <!-- Calibration Section -->
+      <section class="log-section" id="bsCalibrationSection" style="margin-top:24px;">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">On-device calibration</p>
+            <h2>Calibrate brown scale</h2>
+            <p class="lede" style="font-size:13px;margin-top:4px;color:var(--text-muted);">
+              For each level, place the printed patch with the pristine reference, and tap Calibrate level. Stored in localStorage.
+            </p>
+          </div>
+          <div class="records-header-actions">
+            <button class="secondary-button" id="bsResetDefaultsBtn" type="button" style="font-size:12px;height:32px;">Reset to defaults</button>
+            <button class="text-button danger-text" id="bsDeleteCalibrationBtn" type="button" style="font-size:12px;">Delete calibration</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Level</th>
+                <th>Built-in hex</th>
+                <th>Built-in dL</th>
+                <th>Calibrated status</th>
+                <th>Calibrated dL</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="bsCalibrationTableBody">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- History Section -->
+      <section class="log-section" id="bsHistorySection" style="margin-top:24px;">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Local history</p>
+            <h2>Recent readings (last 10)</h2>
+          </div>
+          <div class="records-header-actions">
+            <button class="text-button danger-text" id="bsDeleteAllHistoryBtn" type="button" style="font-size:12px;">Delete all</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Pristine hex</th>
+                <th>Sample hex</th>
+                <th>dL</th>
+                <th>Matched hex</th>
+                <th>Estimate range</th>
+              </tr>
+            </thead>
+            <tbody id="bsHistoryBody">
+              <tr class="empty-row"><td colspan="6">No readings yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
     <footer>
       <span>Local storage active</span>
       <span>Calibration profile v1.6</span>
@@ -340,9 +577,10 @@
     </div>
   </div>
 
-  <script src="demo-color-reader.js?v=2.3"></script>
+  <script src="demo-color-reader.js?v=2.4"></script>
+  <script src="brown-scale-reader.js?v=1.0"></script>
   <script src="ai-detector.js?v=2.3" defer></script>
-  <script src="app.js?v=2.3"></script>
+  <script src="app.js?v=2.4"></script>
   <script>
     if ('caches' in window) {
       caches.keys().then((names) => {
@@ -398,10 +636,11 @@
 
     // Bottom Navigation Tab Switching
     const navItems = [
-      { btnId: 'navScan', targetId: 'captureSection' },
-      { btnId: 'navResults', targetId: 'resultPanel' },
-      { btnId: 'navRecords', targetId: 'recordsSection' },
-      { btnId: 'navSession', targetId: 'sessionSection' }
+      { btnId: 'navScan', targetId: 'captureSection', isPage: false },
+      { btnId: 'navBrownScale', targetId: 'brownScalePage', isPage: true },
+      { btnId: 'navResults', targetId: 'resultPanel', isPage: false },
+      { btnId: 'navRecords', targetId: 'recordsSection', isPage: false },
+      { btnId: 'navSession', targetId: 'sessionSection', isPage: false }
     ];
 
     navItems.forEach(item => {
@@ -410,9 +649,23 @@
         btn.addEventListener('click', () => {
           navItems.forEach(n => document.getElementById(n.btnId)?.classList.remove('active'));
           btn.classList.add('active');
-          const target = document.getElementById(item.targetId);
-          if (target) {
-            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+          const workspace = document.querySelector('.workspace');
+          const brownScalePage = document.getElementById('brownScalePage');
+
+          if (item.isPage) {
+            if (workspace) workspace.style.display = 'none';
+            if (brownScalePage) {
+              brownScalePage.style.display = 'block';
+              brownScalePage.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+          } else {
+            if (workspace) workspace.style.display = '';
+            if (brownScalePage) brownScalePage.style.display = 'none';
+            const target = document.getElementById(item.targetId);
+            if (target) {
+              target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
           }
         });
       }
@@ -423,8 +676,8 @@
       const observer = new IntersectionObserver((entries) => {
         entries.forEach(entry => {
           if (entry.isIntersecting && entry.intersectionRatio >= 0.4) {
-            const found = navItems.find(n => n.targetId === entry.target.id);
-            if (found) {
+            const found = navItems.find(n => n.targetId === entry.target.id && !n.isPage);
+            if (found && document.querySelector('.workspace')?.style.display !== 'none') {
               navItems.forEach(n => document.getElementById(n.btnId)?.classList.remove('active'));
               document.getElementById(found.btnId)?.classList.add('active');
             }
@@ -433,8 +686,10 @@
       }, { threshold: [0.4] });
 
       navItems.forEach(item => {
-        const el = document.getElementById(item.targetId);
-        if (el) observer.observe(el);
+        if (!item.isPage) {
+          const el = document.getElementById(item.targetId);
+          if (el) observer.observe(el);
+        }
       });
     }
 
@@ -466,6 +721,10 @@
     <button class="nav-pill-btn active" id="navScan" type="button" aria-label="Scan badge">
       <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
       <span>Scan</span>
+    </button>
+    <button class="nav-pill-btn" id="navBrownScale" type="button" aria-label="Brown scale">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg>
+      <span>Brown scale</span>
     </button>
     <button class="nav-pill-btn" id="navResults" type="button" aria-label="View dose results">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>

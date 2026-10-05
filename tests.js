@@ -348,75 +348,82 @@ assert.equal(savedRec.demoEstimatorVersion, 'color-first-v2.0');
 assert.ok(savedRec.demoRoiMedians.ref);
 assert.ok(savedRec.demoRoiMedians.sample || savedRec.demoRoiMedians.s1);
 
-// Test 2: Reference #95578D with sample equal to each of the four hexes must return 10, 20, 40, 50 ppm. Sample equal to #95578D returns 0.
-const refHex = '#95578D';
-assert.equal(demoColorReader.matchDemoColor(refHex, '#95578D').ppm, 0, 'Sample equal to #95578D must return 0 ppm');
-assert.equal(demoColorReader.matchDemoColor(refHex, '#995873').ppm, 10, 'Sample equal to #995873 must return 10 ppm');
-assert.equal(demoColorReader.matchDemoColor(refHex, '#9C4F6A').ppm, 20, 'Sample equal to #9C4F6A must return 20 ppm');
-assert.equal(demoColorReader.matchDemoColor(refHex, '#B26169').ppm, 40, 'Sample equal to #B26169 must return 40 ppm');
-assert.equal(demoColorReader.matchDemoColor(refHex, '#B36567').ppm, 50, 'Sample equal to #B36567 must return 50 ppm');
+// Test 2: db values from the table return their ppm
+assert.equal(demoColorReader.interpolateDemoPpm(0), 0, 'db 0 must return 0 ppm');
+assert.equal(demoColorReader.interpolateDemoPpm(15.71), 10, 'db 15.71 must return 10 ppm');
+assert.equal(demoColorReader.interpolateDemoPpm(18.59), 20, 'db 18.59 must return 20 ppm');
+assert.equal(demoColorReader.interpolateDemoPpm(29.89), 40, 'db 29.89 must return 40 ppm');
+assert.equal(demoColorReader.interpolateDemoPpm(31.85), 50, 'db 31.85 must return 50 ppm');
 
-// Test 2b: Verified via processDemoColorReadout
-assert.equal(demoColorReader.processDemoColorReadout({ ref: refHex, sample: '#95578D' }).ppm, 0);
-assert.equal(demoColorReader.processDemoColorReadout({ ref: refHex, sample: '#995873' }).ppm, 10);
-assert.equal(demoColorReader.processDemoColorReadout({ ref: refHex, sample: '#9C4F6A' }).ppm, 20);
-assert.equal(demoColorReader.processDemoColorReadout({ ref: refHex, sample: '#B26169' }).ppm, 40);
-assert.equal(demoColorReader.processDemoColorReadout({ ref: refHex, sample: '#B36567' }).ppm, 50);
+assert.equal(demoColorReader.matchDemoColor(0).ppm, 0);
+assert.equal(demoColorReader.matchDemoColor(15.71).ppm, 10);
+assert.equal(demoColorReader.matchDemoColor(18.59).ppm, 20);
+assert.equal(demoColorReader.matchDemoColor(29.89).ppm, 40);
+assert.equal(demoColorReader.matchDemoColor(31.85).ppm, 50);
 
-// Test 3: A uniform tint applied to both patches leaves the ppm unchanged within tolerance
-const refBaseLab = demoColorReader.rgbToLab(demoColorReader.hexToRgb('#95578D'));
-const testPpmHexes = [
-  { expectedPpm: 0, hex: '#95578D' },
-  { expectedPpm: 10, hex: '#995873' },
-  { expectedPpm: 20, hex: '#9C4F6A' },
-  { expectedPpm: 40, hex: '#B26169' },
-  { expectedPpm: 50, hex: '#B36567' },
+// Test 2b: Range output (ppm at db minus spread to db plus spread, e.g. "10 to 20 ppm")
+const demoRangeTest = demoColorReader.matchDemoColor(18.59, undefined, { spread: 1.0 });
+assert.ok(demoRangeTest.range.includes('to'), `Range must be in "X to Y ppm" format: ${demoRangeTest.range}`);
+assert.equal(demoRangeTest.ppm, 20);
+
+// Test 3: A uniform tint applied to both halves leaves db unchanged
+const demoRefLab = [45.77, 34.05, -19.46];
+const demoTestTable = [
+  { expectedPpm: 0, db: 0 },
+  { expectedPpm: 10, db: 15.71 },
+  { expectedPpm: 20, db: 18.59 },
+  { expectedPpm: 40, db: 29.89 },
+  { expectedPpm: 50, db: 31.85 },
 ];
 
-const tints = [
+const demoTints = [
   [12.5, -8.3, 15.2],
   [-10.0, 15.0, -12.0],
   [5.0, 5.0, 5.0],
 ];
 
-for (const { expectedPpm, hex } of testPpmHexes) {
-  const sampleBaseLab = demoColorReader.rgbToLab(demoColorReader.hexToRgb(hex));
-  const baseResult = demoColorReader.matchDemoColor(refBaseLab, sampleBaseLab);
+for (const { expectedPpm, db } of demoTestTable) {
+  const sampleLab = [demoRefLab[0], demoRefLab[1], demoRefLab[2] + db];
+  const baseResult = demoColorReader.matchDemoColor(demoRefLab, sampleLab);
 
-  for (const tint of tints) {
-    const tintedRef = [refBaseLab[0] + tint[0], refBaseLab[1] + tint[1], refBaseLab[2] + tint[2]];
-    const tintedSample = [sampleBaseLab[0] + tint[0], sampleBaseLab[1] + tint[1], sampleBaseLab[2] + tint[2]];
+  for (const tint of demoTints) {
+    const tintedRef = [demoRefLab[0] + tint[0], demoRefLab[1] + tint[1], demoRefLab[2] + tint[2]];
+    const tintedSample = [sampleLab[0] + tint[0], sampleLab[1] + tint[1], sampleLab[2] + tint[2]];
     const tintedResult = demoColorReader.matchDemoColor(tintedRef, tintedSample);
 
     assert.ok(
-      Math.abs(baseResult.ppm - tintedResult.ppm) < 1e-4,
-      `Uniform tint ${tint} changed ppm for ${hex} (base: ${baseResult.ppm}, tinted: ${tintedResult.ppm})`
+      Math.abs(baseResult.db - tintedResult.db) < 1e-4,
+      `Uniform tint ${tint} changed db (base: ${baseResult.db}, tinted: ${tintedResult.db})`
     );
     assert.equal(tintedResult.ppm, expectedPpm, `Tinted result ppm must equal expected ppm ${expectedPpm}`);
   }
 }
 
-// Test 4: 40 and 50 inputs return a ppm or range that includes the true value
-const result40 = demoColorReader.matchDemoColor(refHex, '#B26169');
-const result50 = demoColorReader.matchDemoColor(refHex, '#B36567');
-
-assert.ok(result40.matched, '40 ppm input must match');
-if (result40.isRange) {
-  assert.ok(result40.range.includes('40'), `Range "${result40.range}" must include 40`);
-  const [min40, max40] = result40.range.replace(' ppm', '').split(' to ').map(Number);
-  assert.ok(min40 <= 40 && 40 <= max40, `Range [${min40}, ${max40}] must include 40`);
-} else {
-  assert.equal(result40.ppm, 40, 'ppm must equal 40');
+// Test 4: 10 repeated captures of the same synthetic image return identical ppm
+const syntheticDemoBadge = demoColorReader.createDemoBadgeCanvas({ samplePpm: 20 });
+const demoRepeatCaptures = [];
+for (let i = 0; i < 10; i++) {
+  const processed = demoColorReader.processDemoFrames([syntheticDemoBadge]);
+  assert.equal(processed.valid, true);
+  demoRepeatCaptures.push(processed);
+}
+assert.equal(demoRepeatCaptures.length, 10);
+const firstDemoPpm = demoRepeatCaptures[0].ppm;
+const firstDemoDb = demoRepeatCaptures[0].db;
+for (let i = 1; i < 10; i++) {
+  assert.equal(demoRepeatCaptures[i].ppm, firstDemoPpm, `Capture ${i} ppm must match first capture`);
+  assert.equal(demoRepeatCaptures[i].db, firstDemoDb, `Capture ${i} db must match first capture`);
 }
 
-assert.ok(result50.matched, '50 ppm input must match');
-if (result50.isRange) {
-  assert.ok(result50.range.includes('50'), `Range "${result50.range}" must include 50`);
-  const [min50, max50] = result50.range.replace(' ppm', '').split(' to ').map(Number);
-  assert.ok(min50 <= 50 && 50 <= max50, `Range [${min50}, ${max50}] must include 50`);
-} else {
-  assert.equal(result50.ppm, 50, 'ppm must equal 50');
+// Test 4b: Spread above 1.5 rejects the capture with "Hold steady"
+const unsteadyFrames = [];
+for (let i = 0; i < 5; i++) {
+  unsteadyFrames.push(demoColorReader.createDemoBadgeCanvas({ samplePpm: 10 + i * 10 }));
 }
+const unsteadyResult = demoColorReader.processDemoFrames(unsteadyFrames);
+assert.equal(unsteadyResult.valid, false);
+assert.equal(unsteadyResult.refusalReason, 'Hold steady');
+assert.ok(unsteadyResult.spreadDb > 1.5);
 
 // Test 5: Quality gates - each gate has a passing and a failing fixture
 // A. Uniformity Gate:
@@ -446,6 +453,102 @@ const failClipCheck = demoColorReader.checkDemoQualityGates(failClipCanvas);
 assert.equal(failClipCheck.gates.sample.clippingPassed, false, 'Clipped patch should fail clipping gate');
 assert.ok(failClipCheck.gates.sample.clippedFraction > 0.02);
 assert.equal(failClipCheck.gates.sample.failureReason, 'Too bright or dark');
+
+// --- Brown Scale Dedicated Module Unit & Integration Tests ---
+const brownScaleReader = require('./brown-scale-reader.js');
+
+// Test BS 1: Each table dL returns its own ppm
+assert.equal(brownScaleReader.interpolateBrownScalePpm(0), 0, 'dL 0 -> 0 ppm');
+assert.equal(brownScaleReader.interpolateBrownScalePpm(7.8), 1, 'dL 7.8 -> 1 ppm');
+assert.equal(brownScaleReader.interpolateBrownScalePpm(12.8), 5, 'dL 12.8 -> 5 ppm');
+assert.equal(brownScaleReader.interpolateBrownScalePpm(23.3), 10, 'dL 23.3 -> 10 ppm');
+assert.equal(brownScaleReader.interpolateBrownScalePpm(36.8), 20, 'dL 36.8 -> 20 ppm');
+assert.equal(brownScaleReader.interpolateBrownScalePpm(45.0), 50, 'dL 45.0 -> 50 ppm');
+assert.equal(brownScaleReader.interpolateBrownScalePpm(53.0), 100, 'dL 53.0 -> 100 ppm');
+
+// Test BS 2: A uniform tint applied to both halves leaves dL unchanged within tolerance
+const pristineRefLab = brownScaleReader.PRISTINE_LAB;
+const brownScaleTable = [
+  { expectedPpm: 0, dL: 0 },
+  { expectedPpm: 1, dL: 7.8 },
+  { expectedPpm: 5, dL: 12.8 },
+  { expectedPpm: 10, dL: 23.3 },
+  { expectedPpm: 20, dL: 36.8 },
+  { expectedPpm: 50, dL: 45.0 },
+  { expectedPpm: 100, dL: 53.0 },
+];
+
+const brownTints = [
+  [8.0, -4.0, 5.0],
+  [-6.0, 8.0, -4.0],
+  [2.0, 2.0, 2.0],
+];
+
+for (const { expectedPpm, dL } of brownScaleTable) {
+  const smpLab = [pristineRefLab[0] - dL, pristineRefLab[1], pristineRefLab[2]];
+  const baseResult = brownScaleReader.estimateBrownScale(pristineRefLab, smpLab);
+
+  for (const tint of brownTints) {
+    const tintedRef = [pristineRefLab[0] + tint[0], pristineRefLab[1] + tint[1], pristineRefLab[2] + tint[2]];
+    const tintedSmp = [smpLab[0] + tint[0], smpLab[1] + tint[1], smpLab[2] + tint[2]];
+    const tintedResult = brownScaleReader.estimateBrownScale(tintedRef, tintedSmp);
+
+    assert.ok(
+      Math.abs(baseResult.dL - tintedResult.dL) < 1e-4,
+      `Uniform tint ${tint} changed dL (base: ${baseResult.dL}, tinted: ${tintedResult.dL})`
+    );
+    assert.equal(tintedResult.ppm, expectedPpm, `Tinted result ppm must equal expected ${expectedPpm}`);
+  }
+}
+
+// Test BS 3: A sample equal to the reference returns 0
+const equalResult = brownScaleReader.estimateBrownScale('#C4C3BF', '#C4C3BF');
+assert.equal(equalResult.ppm, 0, 'Sample equal to reference must return 0 ppm');
+assert.equal(equalResult.dL, 0, 'Sample equal to reference must have dL 0');
+assert.equal(equalResult.displayPpm, '0 to 0 ppm');
+
+// Test BS 4: 10 repeated captures of the same synthetic image return identical ppm
+const syntheticBrownBadge = brownScaleReader.createBrownScaleBadgeCanvas({ samplePpm: 20 });
+const brownRepeatCaptures = [];
+for (let i = 0; i < 10; i++) {
+  const processed = brownScaleReader.processBrownScaleFrames([syntheticBrownBadge]);
+  assert.equal(processed.valid, true);
+  brownRepeatCaptures.push(processed);
+}
+assert.equal(brownRepeatCaptures.length, 10);
+const firstBrownPpm = brownRepeatCaptures[0].ppm;
+const firstBrownDL = brownRepeatCaptures[0].dL;
+for (let i = 1; i < 10; i++) {
+  assert.equal(brownRepeatCaptures[i].ppm, firstBrownPpm, `Brown capture ${i} ppm must match first`);
+  assert.equal(brownRepeatCaptures[i].dL, firstBrownDL, `Brown capture ${i} dL must match first`);
+}
+
+// Test BS 5: Spread of L* above 1.0 rejects with "Hold steady"
+const unsteadyBrownFrames = [];
+for (let i = 0; i < 5; i++) {
+  unsteadyBrownFrames.push(brownScaleReader.createBrownScaleBadgeCanvas({ tint: [i * 1.5, 0, 0] }));
+}
+const unsteadyBrownResult = brownScaleReader.processBrownScaleFrames(unsteadyBrownFrames);
+assert.equal(unsteadyBrownResult.valid, false);
+assert.equal(unsteadyBrownResult.refusalReason, 'Hold steady');
+assert.ok(unsteadyBrownResult.spreadL > 1.0);
+
+// Test BS 6: Pristine reference far from #C4C3BF rejected with warning
+const badRefCanvas = brownScaleReader.createBrownScaleBadgeCanvas({ badReference: true });
+const badRefResult = brownScaleReader.processBrownScaleFrames([badRefCanvas]);
+assert.equal(badRefResult.valid, false);
+assert.ok(badRefResult.refusalReason.includes('shadow or tint warning'));
+
+// Test BS 7: Calibration save, override, and reset
+const customCalLevel = { ppm: 10, dL: 20.0, pristineHex: '#C4C3BF', sampleHex: '#B17762' };
+brownScaleReader.saveCalibrationLevel(customCalLevel.ppm, customCalLevel.pristineHex, customCalLevel.sampleHex, customCalLevel.dL);
+const customCalResult = brownScaleReader.estimateBrownScale(pristineRefLab, [pristineRefLab[0] - 20.0, pristineRefLab[1], pristineRefLab[2]]);
+assert.equal(customCalResult.ppm, 10, 'Custom calibration should override default table');
+assert.equal(customCalResult.usingCalibration, true);
+
+brownScaleReader.deleteCalibration();
+assert.equal(brownScaleReader.getCalibration(), null, 'Calibration should be deleted on reset');
+
 
 // Test 6: Demo stability buffer tests
 const sampledDemo = demoColorReader.sampleDemoCanvas(passUniformCanvas);
