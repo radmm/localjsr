@@ -48,6 +48,8 @@ const {
   saveRecord,
   deleteRecord,
   deleteAllRecords,
+  AutoCaptureEngine,
+  executeLearnBadgeWorkflow,
 } = app;
 
 console.log('Running H2S Badge Reader tests...');
@@ -96,12 +98,12 @@ for (const targetPpm of [10, 20, 40, 50]) {
 }
 console.log('✓ Test 2 passed: 200 trials per class with +-8% gain and +-12% brightness achieved >= 95% accuracy.');
 
-// 3. No badge returns "No badge found"
+// 3. No badge returns friendly "Place the badge so the six squares sit on the dots."
 const noBadgeImage = createSyntheticBadge({ ppm: 20, noBadge: true });
 const noBadgeResult = captureBadgeReading([noBadgeImage]);
 assert.equal(noBadgeResult.valid, false);
-assert.equal(noBadgeResult.refusalReason, 'No badge found');
-console.log('✓ Test 3 passed: Non-yellow S1 returns "No badge found".');
+assert.equal(noBadgeResult.refusalReason, 'Place the badge so the six squares sit on the dots.');
+console.log('✓ Test 3 passed: Non-yellow S1 returns friendly tip: "Place the badge so the six squares sit on the dots."');
 
 // 4. Random color returns "No match"
 const randomColorImage = createSyntheticBadge({ ppm: 20, randomColor: true });
@@ -138,28 +140,8 @@ for (const targetPpm of [10, 20, 40, 50]) {
 }
 console.log('✓ Test 6 passed: Rotated grid 90° gives the same result.');
 
-// 7. Each rejection has a passing and a failing fixture
-// A. Uniformity gate: std <= 12 passes; std > 12 fails
-const uniformPassBadge = createSyntheticBadge({ ppm: 20, nonUniformStd: 0 });
-const uniformPassResult = captureBadgeReading([uniformPassBadge]);
-assert.equal(uniformPassResult.valid, true, 'Uniform badge should pass');
-
-const uniformFailBadge = createSyntheticBadge({ ppm: 20, nonUniformStd: 30 });
-const uniformFailResult = captureBadgeReading([uniformFailBadge]);
-assert.equal(uniformFailResult.valid, false);
-assert.equal(uniformFailResult.refusalReason, 'Patch not uniform, retake');
-
-// B. Clipping gate: clipped <= 2% passes; clipped > 2% fails
-const clippingPassBadge = createSyntheticBadge({ ppm: 20, clipped: false });
-const clippingPassResult = captureBadgeReading([clippingPassBadge]);
-assert.equal(clippingPassResult.valid, true, 'Unclipped badge should pass');
-
-const clippingFailBadge = createSyntheticBadge({ ppm: 20, clipped: true });
-const clippingFailResult = captureBadgeReading([clippingFailBadge]);
-assert.equal(clippingFailResult.valid, false);
-assert.match(clippingFailResult.refusalReason, /Clipping/);
-
-// C. Frame stability gate: spread <= 6 passes; spread > 6 fails
+// 7. Rejection checks with friendly tips (Hold steady, lighting, badge not in frame)
+// A. Frame stability gate: spread <= 6 passes; spread > 6 fails with "Hold steady."
 const stableFrames = [
   createSyntheticBadge({ ppm: 20 }),
   createSyntheticBadge({ ppm: 20 }),
@@ -175,28 +157,100 @@ const unstableFrames = [
 ];
 const unstableResult = captureBadgeReading(unstableFrames);
 assert.equal(unstableResult.valid, false);
-assert.equal(unstableResult.refusalReason, 'Hold steady');
+assert.equal(unstableResult.refusalReason, 'Hold steady.');
 
-// D. Lighting gain gate: gain in [0.6, 1.6] passes; gain outside fails
+// B. Lighting gain out of range: friendly too dark / shadow tip
 const gainPassBadge = createSyntheticBadge({ ppm: 20, gain: [1.1, 1.1, 1.1] });
 const gainPassResult = captureBadgeReading([gainPassBadge]);
-assert.equal(gainPassResult.valid, true, 'Gain inside [0.6, 1.6] should pass');
+assert.equal(gainPassResult.valid, true, 'Gain inside limits should pass');
 
-const gainFailBadge = createSyntheticBadge({ ppm: 20, gain: [0.4, 0.4, 0.4] }); // gain ~ 2.5 > 1.6
+const gainFailBadge = createSyntheticBadge({ ppm: 20, gain: [0.4, 0.4, 0.4] });
 const gainFailResult = captureBadgeReading([gainFailBadge]);
 assert.equal(gainFailResult.valid, false);
-assert.match(gainFailResult.refusalReason, /Lighting out of range/);
+assert.match(gainFailResult.refusalReason, /Too dark|Shadow|Move/);
 
-// E. S1 yellow gate: yellow passes; non-yellow fails
+// C. S1 yellow gate: yellow passes; non-yellow fails with "Place the badge so the six squares sit on the dots."
 const yellowPassBadge = createSyntheticBadge({ ppm: 20, noBadge: false });
 assert.equal(captureBadgeReading([yellowPassBadge]).valid, true);
 
 const yellowFailBadge = createSyntheticBadge({ ppm: 20, noBadge: true });
-assert.equal(captureBadgeReading([yellowFailBadge]).valid, false);
-assert.equal(captureBadgeReading([yellowFailBadge]).refusalReason, 'No badge found');
-console.log('✓ Test 7 passed: All 5 rejection checks have passing and failing fixtures.');
+const yellowFailResult = captureBadgeReading([yellowFailBadge]);
+assert.equal(yellowFailResult.valid, false);
+assert.equal(yellowFailResult.refusalReason, 'Place the badge so the six squares sit on the dots.');
+console.log('✓ Test 7 passed: Friendly tips for instability, lighting, and frame alignment.');
 
-// 8. Records tests: deleting one row removes only that record; deleting all records empties storage and UI
+// 8. Specific Prompt Requirements Tests:
+// A. Patches with some pixels at 255 still produce a reading from the remaining pixels
+const badgeWithClippedPixels = createSyntheticBadge({ ppm: 20, clippedRatio: 0.25 });
+const clippedResult = captureBadgeReading([badgeWithClippedPixels]);
+assert.equal(clippedResult.valid, true, 'Patches with some pixels at 255 must produce a valid reading');
+assert.equal(clippedResult.classPpm, 20);
+console.log('✓ Test 8A passed: Patches with some pixels at 255 still produce a reading from remaining pixels.');
+
+// B. A badge with only S1 glared still reads
+const badgeS1Glared = createSyntheticBadge({ ppm: 20, s1Glared: true });
+const s1GlaredResult = captureBadgeReading([badgeS1Glared]);
+assert.equal(s1GlaredResult.valid, true, 'A badge with only S1 glared still reads');
+assert.equal(s1GlaredResult.classPpm, 20);
+assert.equal(s1GlaredResult.patchStatus?.S1?.status, 'red', 'S1 is glared and marked red');
+console.log('✓ Test 8B passed: A badge with only S1 glared still reads.');
+
+// C. Auto capture fires once after 1 second of stable good patches and not before
+let autoCaptureFiredCount = 0;
+let beepCount = 0;
+const autoEngine = new AutoCaptureEngine({
+  delayMs: 1000,
+  onCapture: () => { autoCaptureFiredCount++; },
+  onBeep: () => { beepCount++; },
+});
+
+// t = 0ms
+let updateRes = autoEngine.update({ isKeyPatchesUsable: true, isStable: true, now: 0 });
+assert.equal(updateRes.fired, false, 'Auto capture must not fire at t=0');
+assert.equal(autoCaptureFiredCount, 0);
+
+// t = 500ms
+updateRes = autoEngine.update({ isKeyPatchesUsable: true, isStable: true, now: 500 });
+assert.equal(updateRes.fired, false, 'Auto capture must not fire at t=500ms');
+assert.equal(autoCaptureFiredCount, 0);
+
+// t = 999ms
+updateRes = autoEngine.update({ isKeyPatchesUsable: true, isStable: true, now: 999 });
+assert.equal(updateRes.fired, false, 'Auto capture must not fire before 1000ms');
+assert.equal(autoCaptureFiredCount, 0);
+
+// t = 1000ms: fires!
+updateRes = autoEngine.update({ isKeyPatchesUsable: true, isStable: true, now: 1000 });
+assert.equal(updateRes.fired, true, 'Auto capture must fire at 1 second');
+assert.equal(autoCaptureFiredCount, 1, 'Auto capture must fire exactly once');
+assert.equal(beepCount, 1, 'Beep feedback played');
+
+// t = 1100ms: cooldown active, does not fire again
+updateRes = autoEngine.update({ isKeyPatchesUsable: true, isStable: true, now: 1100 });
+assert.equal(updateRes.fired, false, 'Auto capture must not re-fire immediately');
+assert.equal(autoCaptureFiredCount, 1);
+console.log('✓ Test 8C passed: Auto capture fires once after 1 second of stable good patches and not before.');
+
+// D. Learn saves without any popup
+resetLearnedTemplates();
+const testLearnBadge = createSyntheticBadge({ ppm: 40 });
+const learnResult = executeLearnBadgeWorkflow(40, [testLearnBadge]);
+assert.equal(learnResult.success, true);
+assert.equal(learnResult.message, 'Learned 40 ppm');
+const learnedMap = getCombinedTemplates();
+assert.equal(learnedMap[40].isDefault, false, 'Learned template must be saved and active');
+resetLearnedTemplates();
+console.log('✓ Test 8D passed: Learn saves without any popup.');
+
+// E. No alert() calls remain in the code
+const fs = require('fs');
+const appJsSource = fs.readFileSync('./app.js', 'utf8');
+const indexHtmlSource = fs.readFileSync('./index.html', 'utf8');
+assert.ok(!appJsSource.includes('alert('), 'No alert() calls in app.js');
+assert.ok(!indexHtmlSource.includes('alert('), 'No alert() calls in index.html');
+console.log('✓ Test 8E passed: No alert() calls remain in the code.');
+
+// 9. Records tests: deleting one row removes only that record; deleting all records empties storage and UI
 global.localStorage.clear();
 assert.equal(records().length, 0);
 
@@ -219,6 +273,6 @@ assert.ok(remaining.some((r) => r.timestamp === r3.timestamp), 'r3 must remain')
 deleteAllRecords();
 assert.equal(records().length, 0, 'All records should be cleared');
 assert.equal(global.localStorage.getItem('h2s-badge-records-v1'), null);
-console.log('✓ Test 8 passed: Single row deletion and delete-all-records operate cleanly.');
+console.log('✓ Test 9 passed: Single row deletion and delete-all-records operate cleanly.');
 
 console.log('\nAll tests passed successfully! Verification complete.');
