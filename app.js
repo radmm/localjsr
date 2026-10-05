@@ -1771,6 +1771,20 @@ function initBrowser() {
     }
   });
 
+  const splitGuideToggle = document.querySelector('#splitGuideToggle');
+  if (splitGuideToggle) {
+    splitGuideToggle.addEventListener('change', (e) => {
+      const guide = document.querySelector('#badgeGuide');
+      if (guide) {
+        if (e.target.checked) {
+          guide.classList.add('split-guide');
+        } else {
+          guide.classList.remove('split-guide');
+        }
+      }
+    });
+  }
+
   document.querySelector('#clearForm').addEventListener('click', () => ['workerId', 'badgeId', 'shiftId'].forEach((id) => {
     const element = document.querySelector(`#${id}`);
     if (element) element.value = '';

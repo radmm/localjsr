@@ -49,7 +49,24 @@
               <strong>Camera ready</strong>
               <span>Tap to start preview or upload an image</span>
             </div>
-            <div class="badge-guide" id="badgeGuide" aria-hidden="true"></div>
+            <!-- Vertically split guide: Left Reference (0 ppm), Right Sample Patch with divider -->
+            <div class="badge-guide split-guide" id="badgeGuide" aria-hidden="true">
+              <div class="guide-half guide-left">
+                <span class="guide-half-label">
+                  <span class="guide-glow-dot ref"></span>
+                  REF (0 ppm)
+                </span>
+                <div class="guide-sample-box">Center 40%</div>
+              </div>
+              <div class="guide-divider"></div>
+              <div class="guide-half guide-right">
+                <span class="guide-half-label">
+                  <span class="guide-glow-dot sample"></span>
+                  SAMPLE PATCH
+                </span>
+                <div class="guide-sample-box">Center 40%</div>
+              </div>
+            </div>
             <canvas class="roi-debug-overlay" id="roiDebugOverlay" hidden></canvas>
             <div class="camera-state" id="cameraState">Live preview</div>
           </div>
@@ -59,6 +76,7 @@
             <button class="capture-button" id="captureButton" type="button">Capture 3 frames</button>
           </div>
           <div class="debug-toggles">
+            <label class="debug-toggle"><input id="splitGuideToggle" type="checkbox" checked> Split divider guide</label>
             <label class="debug-toggle"><input id="debugToggle" type="checkbox"> Show ROI debug</label>
             <label class="debug-toggle"><input id="permissiveToggle" type="checkbox" checked> Field mode (always estimate)</label>
             <label class="debug-toggle"><input id="chartDemoToggle" type="checkbox"> Demo mode (color-first)</label>

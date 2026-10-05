@@ -1267,23 +1267,33 @@ footer {
    BROWN SCALE & SPLIT GUIDE STYLES
    ========================================================================== */
 
+.bs-badge-guide,
+.badge-guide.split-guide {
+  display: flex;
+  overflow: hidden;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.25);
+  border: 2px dashed rgba(255, 255, 255, 0.75);
+}
+
 .bs-badge-guide {
   position: absolute;
   inset: 10%;
-  border: 2px dashed rgba(255, 255, 255, 0.75);
   border-radius: 8px;
-  display: flex;
   pointer-events: none;
-  overflow: hidden;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.25);
 }
 
-.bs-guide-half {
+.badge-guide.split-guide {
+  border-radius: var(--radius-md, 8px);
+}
+
+.bs-guide-half,
+.guide-half {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  font-family: 'JetBrains Mono', 'Space Mono', monospace;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.5px;
@@ -1291,6 +1301,7 @@ footer {
   color: #fff;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
   position: relative;
+  height: 100%;
 }
 
 .bs-guide-left {
@@ -1301,13 +1312,26 @@ footer {
   background: rgba(143, 83, 70, 0.15);
 }
 
-.bs-guide-divider {
-  width: 2px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+.guide-left {
+  background: rgba(149, 87, 141, 0.14);
 }
 
-.bs-guide-sample-box {
+.guide-right {
+  background: rgba(74, 222, 128, 0.12);
+}
+
+.bs-guide-divider,
+.guide-divider {
+  width: 2px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.6), 0 0 2px rgba(0, 0, 0, 0.9);
+  position: relative;
+  z-index: 2;
+}
+
+.bs-guide-sample-box,
+.guide-sample-box {
   width: 40%;
   height: 40%;
   border: 1.5px solid rgba(56, 189, 248, 0.9);
@@ -1319,6 +1343,46 @@ footer {
   font-size: 9px;
   color: #38bdf8;
   margin-top: 8px;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.25);
+  backdrop-filter: blur(2px);
+}
+
+.guide-half-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', 'Space Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.65);
+  padding: 3px 8px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.guide-glow-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.guide-glow-dot.ref {
+  background-color: #a855f7;
+  color: #a855f7;
+}
+
+.guide-glow-dot.sample {
+  background-color: #22c55e;
+  color: #22c55e;
+}
+
+.badge-guide:not(.split-guide) .guide-half,
+.badge-guide:not(.split-guide) .guide-divider {
+  display: none;
 }
 
 .bs-estimate-large {
