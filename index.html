@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f9fafb">
-  <meta name="description" content="Industrial H2S dosimeter badge reader with on-device colorimetry, drift compensation, and offline exposure tracking.">
+  <meta name="theme-color" content="#0d9488">
+  <meta name="description" content="H2S exposure dosimeter badge reader with on-device colorimetry, lighting cancellation, and offline tracking.">
   <title>H2S Badge Reader</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,7 +13,6 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
-  <!-- iOS Safari home screen meta tags -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -23,10 +22,13 @@
 <body>
   <main class="app-shell">
     <header class="topbar">
-      <div class="brand"><span class="brand-mark">H₂S</span><span>Badge Reader</span></div>
+      <div class="brand">
+        <span class="brand-mark">H₂S</span>
+        <span class="brand-title">Badge Reader</span>
+      </div>
       <div class="topbar-actions">
-        <button id="pwaInstallButton" class="secondary-button" style="display:none;height:36px;padding:0 12px;font-size:12px;cursor:pointer;" type="button">Install</button>
-        <div class="offline-chip">Offline mode</div>
+        <button id="pwaInstallButton" class="secondary-button pwa-btn" style="display:none;" type="button">Install</button>
+        <span class="offline-indicator">Offline mode</span>
         <button id="themeToggle" class="theme-toggle-btn" type="button" aria-label="Toggle theme" title="Toggle theme">
           <svg class="sun-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
           <svg class="moon-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -34,297 +36,131 @@
       </div>
     </header>
 
-    <section class="workspace">
+    <div class="workspace">
       <div class="page-heading">
-        <p class="eyebrow">Field capture / <span id="captureDate"></span></p>
-        <h1>Read a badge</h1>
-        <p class="lede">Place the full badge inside the frame. The result is calculated on this device.</p>
+        <div>
+          <p class="eyebrow">Field capture / <span id="captureDate"></span></p>
+          <h1>Read a badge</h1>
+          <p class="lede">Align the badge inside the rectangular guide. Calculated offline on your device.</p>
+        </div>
       </div>
 
+      <!-- SCAN & CAPTURE -->
       <section class="capture-layout">
         <div class="capture-panel" id="captureSection">
           <div class="camera-frame" id="cameraFrame">
             <video id="cameraFeed" autoplay playsinline muted></video>
             <div class="camera-placeholder" id="cameraPlaceholder">
+              <div class="camera-glyph">＋</div>
               <strong>Camera ready</strong>
-              <span>Tap to start preview or upload an image</span>
+              <span>Align badge in guide</span>
             </div>
-            <!-- Vertically split guide: Left Reference (0 ppm), Right Sample Patch with divider -->
-            <div class="badge-guide split-guide" id="badgeGuide" aria-hidden="true">
-              <div class="guide-half guide-left">
-                <span class="guide-half-label">
-                  <span class="guide-glow-dot ref"></span>
-                  REF (0 ppm)
-                </span>
-                <div class="guide-sample-box">Center 40%</div>
-              </div>
-              <div class="guide-divider"></div>
-              <div class="guide-half guide-right">
-                <span class="guide-half-label">
-                  <span class="guide-glow-dot sample"></span>
-                  SAMPLE PATCH
-                </span>
-                <div class="guide-sample-box">Center 40%</div>
+
+            <!-- Plain guide rectangle (width:height = 0.64, no corner brackets) -->
+            <div class="badge-guide" id="badgeGuide" aria-hidden="true">
+              <div class="guide-patch-markers">
+                <!-- Col 1 REF -->
+                <span class="patch-target r1" title="R1 pink">R1</span>
+                <span class="patch-target r2" title="R2 purple">R2</span>
+                <span class="patch-target r3" title="R3 gray (anchor)">R3</span>
+                <!-- Col 2 SENSE -->
+                <span class="patch-target s1" title="S1 yellow">S1</span>
+                <span class="patch-target s2" title="S2 magenta">S2</span>
+                <span class="patch-target s3" title="S3 brown">S3</span>
               </div>
             </div>
+
             <canvas class="roi-debug-overlay" id="roiDebugOverlay" hidden></canvas>
-            <div class="camera-state" id="cameraState">Live preview</div>
+            <div class="camera-state" id="cameraState">Rear camera active</div>
           </div>
+
           <div class="capture-actions">
+            <!-- Capture is the ONLY filled button -->
+            <button class="capture-button" id="captureButton" type="button">
+              <span></span> Capture 15 frames
+            </button>
             <button class="secondary-button" id="uploadButton" type="button">Upload image</button>
             <input id="imageInput" type="file" accept="image/*" hidden>
-            <button class="capture-button" id="captureButton" type="button">Capture 3 frames</button>
+            <button class="secondary-button" id="rotateButton" type="button">Rotate grid 90°</button>
           </div>
-          <div class="debug-toggles">
-            <label class="debug-toggle"><input id="splitGuideToggle" type="checkbox" checked> Split divider guide</label>
-            <label class="debug-toggle"><input id="debugToggle" type="checkbox"> Show ROI debug</label>
-            <label class="debug-toggle"><input id="permissiveToggle" type="checkbox" checked> Field mode (always estimate)</label>
-            <label class="debug-toggle"><input id="chartDemoToggle" type="checkbox"> Demo mode (color-first)</label>
+
+          <!-- Secondary / Utility text buttons -->
+          <div class="sub-actions">
+            <button class="text-button" id="debugToggleBtn" type="button">Debug</button>
+            <div class="learn-badge-wrap">
+              <input id="learnPpmInput" type="number" placeholder="ppm" min="1" max="100">
+              <button class="text-button" id="learnBadgeBtn" type="button">Learn this badge</button>
+            </div>
+            <button class="text-button" id="repeatTestBtn" type="button">Repeat test (5x)</button>
+            <button class="text-button destructive" id="resetLearnedBtn" type="button">Reset to defaults</button>
           </div>
+
+          <div id="repeatTestResults" class="repeat-test-banner" hidden></div>
         </div>
 
+        <!-- SESSION -->
         <aside class="session-panel" id="sessionSection">
           <div class="panel-header"><span>Current session</span></div>
           <label>Worker ID<input id="workerId" value="WRK-1048" autocomplete="off"></label>
           <label>Badge ID<input id="badgeId" value="H2S-24091" autocomplete="off"></label>
           <label>Shift ID<input id="shiftId" value="NIGHT-07" autocomplete="off"></label>
-          <label>Exposure duration (min)<input id="exposureMinutes" type="number" min="1" max="480" value="15" autocomplete="off"></label>
+          <label>Exposure duration (minutes)<input id="exposureMinutes" type="number" min="1" max="480" value="15" autocomplete="off"></label>
           <div class="threshold-row"><span>Occupational threshold</span><strong id="thresholdValue">10 ppm·min</strong></div>
           <button class="text-button" id="clearForm" type="button">Clear session data</button>
         </aside>
       </section>
 
-      <!-- COLOR-FIRST DEMO READOUT PANEL (TWO ROIS ONLY: 0 PPM REF & SAMPLE) -->
-      <section class="demo-color-panel" id="demoModeSection" style="display:none;">
-        <div class="demo-card-container">
-          <div class="demo-header-row">
-            <div>
-              <p class="eyebrow">Demo mode</p>
-              <h2>Colorimetry & chart alignment</h2>
-              <p class="lede">Two-ROI differential colorimeter: 0 ppm reference patch &amp; sample patch.</p>
-            </div>
-            <div class="demo-controls-bar">
-              <label class="demo-temp-label">
-                <span>Chart temp:</span>
-                <select id="demoTempSelect" class="secondary-button" style="height:36px;padding:0 8px;font-size:12px;cursor:pointer;">
-                  <option value="25" selected>25°C (Default)</option>
-                  <option value="20">20°C</option>
-                  <option value="15">15°C</option>
-                  <option value="10">10°C</option>
-                  <option value="5">5°C</option>
-                  <option value="all">All columns</option>
-                </select>
-              </label>
-              <div id="demoStabilityBadge" class="stability-badge stable">
-                <span id="demoStabilityText">Stable (spread: ±0.0)</span>
-              </div>
-              <div id="demoCameraLockStatus" class="camera-lock-badge auto">AE/AWB: Auto</div>
-              <button class="secondary-button" id="demoRepeatTestButton" type="button" style="height:36px;font-size:12px;padding:0 12px;">Repeat test (10x)</button>
-              <button class="secondary-button" id="demoTestBadgeButton" type="button" style="height:36px;font-size:12px;padding:0 12px;">Load 2-patch demo badge</button>
-            </div>
-          </div>
-
-          <!-- Demo Color Match Result Card -->
-          <div class="demo-summary-card" id="demoSummaryCard">
-            <div class="demo-summary-top">
-              <span class="eyebrow" id="demoEstimateLabel">Demo estimate, color match</span>
-              <div class="demo-estimate-large" id="demoEstimateLargePpm">-- ppm</div>
-            </div>
-            <div class="demo-color-meta-grid">
-              <div class="demo-meta-item">
-                <small>Observed reference hex</small>
-                <div class="hex-badge-row">
-                  <span class="color-dot" id="demoRefDot" style="background-color:#95578D;"></span>
-                  <code id="demoObservedRefHex">#95578D</code>
-                </div>
-              </div>
-              <div class="demo-meta-item">
-                <small>Observed sample hex</small>
-                <div class="hex-badge-row">
-                  <span class="color-dot" id="demoSampleDot"></span>
-                  <code id="demoObservedSampleHex">--</code>
-                </div>
-              </div>
-              <div class="demo-meta-item">
-                <small>Differential db (b*smp - b*ref)</small>
-                <div class="hex-badge-row">
-                  <strong class="demo-meta-value" id="demoDbVal" style="font-size:13px;color:#38bdf8;">--</strong>
-                </div>
-              </div>
-              <div class="demo-meta-item">
-                <small>Matched chart hex</small>
-                <div class="hex-badge-row">
-                  <span class="color-dot" id="demoChartDot"></span>
-                  <code id="demoMatchedChartHex">--</code>
-                </div>
-              </div>
-              <div class="demo-meta-item">
-                <small>Distance</small>
-                <strong class="demo-meta-value" id="demoMatchDistance">--</strong>
-              </div>
-            </div>
-          </div>
-
-          <!-- Demo Repeat Test Diagnostics Card -->
-          <div class="demo-repeat-card" id="demoRepeatTestCard" style="display:none;margin-top:12px;padding:12px;background:var(--surface-color, #1e293b);border-radius:8px;border:1px solid var(--border-color, #334155);">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-              <strong style="font-size:13px;">Repeat test results (10 captures)</strong>
-              <span class="gate-tag pass" id="demoRepeatStatus">Completed</span>
-            </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:8px;font-size:12px;">
-              <div><small style="color:var(--text-muted);display:block;">db Mean</small><strong id="demoDbMean">--</strong></div>
-              <div><small style="color:var(--text-muted);display:block;">db Min / Max</small><span id="demoDbMinMax">--</span></div>
-              <div><small style="color:var(--text-muted);display:block;">ppm Mean</small><strong id="demoPpmMean">--</strong></div>
-              <div><small style="color:var(--text-muted);display:block;">ppm Min / Max</small><span id="demoPpmMinMax">--</span></div>
-            </div>
-          </div>
-
-          <!-- Demo History Card -->
-          <div class="demo-history-card" id="demoHistoryCard" style="margin-top:16px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-              <strong style="font-size:13px;">Recent demo readings (last 10)</strong>
-              <button class="text-button danger-text" id="demoDeleteHistoryBtn" type="button" style="font-size:11px;">Clear history</button>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Ref hex</th>
-                    <th>Sample hex</th>
-                    <th>db</th>
-                    <th>Estimate range</th>
-                  </tr>
-                </thead>
-                <tbody id="demoHistoryBody">
-                  <tr class="empty-row"><td colspan="5">No demo readings recorded yet.</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- Single Readout Grid: 2 Patches (Reference + Sample) -->
-          <div class="demo-readout-grid demo-two-rois" id="demoReadoutGrid">
-            <!-- Reference Patch Card -->
-            <div class="demo-patch-card" id="demoCardRef">
-              <div class="demo-patch-header">
-                <div class="patch-info">
-                  <span class="patch-badge">REF</span>
-                  <strong>Reference (0 ppm)</strong>
-                </div>
-                <div class="demo-swatch-wrapper">
-                  <div class="demo-swatch-box" id="demoSwatchRef" style="background-color:rgb(220,220,210);"></div>
-                </div>
-              </div>
-              <div class="demo-metric-row">
-                <div class="metric-col">
-                  <small>Measured L*a*b*</small>
-                  <span class="metric-val" id="demoMeasuredRef">L*: 45.77, a*: 34.05, b*: -19.46</span>
-                </div>
-                <div class="metric-col">
-                  <small>Aligned to chart</small>
-                  <span class="metric-val highlight" id="demoAlignedRef">45.77, 34.05, -19.46</span>
-                </div>
-              </div>
-              <div class="demo-delta-row">
-                <span class="delta-label">Delta vs Ref:</span>
-                <span class="delta-val">Baseline (dL: 0.00, da: 0.00, db: 0.00, dE: 0.00)</span>
-              </div>
-              <div class="demo-match-row">
-                <span class="match-tag">Closest chart match</span>
-                <div id="demoMatchRef" class="match-detail"><strong>0 ppm</strong> (dist: 0.00)</div>
-              </div>
-              <div class="demo-gate-status" id="demoGatesRef">
-                <span class="gate-tag pass">Uniformity: Pass</span>
-                <span class="gate-tag pass">Clipping: Pass</span>
-              </div>
-            </div>
-
-            <!-- Single Sample Card -->
-            <div class="demo-patch-card highlight-card" id="demoCardSample">
-              <div class="demo-patch-header">
-                <div class="patch-info">
-                  <span class="patch-badge">SMP</span>
-                  <strong>Sample patch</strong>
-                </div>
-                <div class="demo-swatch-wrapper">
-                  <div class="demo-swatch-box" id="demoSwatchSample" style="background-color:rgb(200,120,80);"></div>
-                  <!-- Backwards compatibility element -->
-                  <div id="demoSwatchS1" style="display:none;"></div>
-                </div>
-              </div>
-              <div class="demo-metric-row">
-                <div class="metric-col">
-                  <small>Measured L*a*b*</small>
-                  <span class="metric-val" id="demoMeasuredSample">--</span>
-                  <!-- Backwards compatibility element -->
-                  <span id="demoMeasuredS1" style="display:none;">--</span>
-                </div>
-                <div class="metric-col">
-                  <small>Aligned to chart</small>
-                  <span class="metric-val highlight" id="demoAlignedSample">--</span>
-                  <!-- Backwards compatibility element -->
-                  <span id="demoAlignedS1" style="display:none;">--</span>
-                </div>
-              </div>
-              <div class="demo-delta-row">
-                <span class="delta-label">Delta vs Ref:</span>
-                <span class="delta-val" id="demoDeltaSample">dL: --, da: --, db: --, dE: --</span>
-                <!-- Backwards compatibility element -->
-                <span id="demoDeltaS1" style="display:none;">--</span>
-              </div>
-              <div class="demo-match-row">
-                <span class="match-tag">Closest chart match</span>
-                <div id="demoMatchSample" class="match-detail">--</div>
-                <!-- Backwards compatibility element -->
-                <div id="demoMatchS1" style="display:none;">--</div>
-              </div>
-              <div class="demo-gate-status" id="demoGatesSample">
-                <span class="gate-tag pass">Uniformity: Pass</span>
-                <span class="gate-tag pass">Clipping: Pass</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
+      <!-- RESULTS -->
       <section class="result-panel" id="resultPanel" aria-live="polite">
         <div class="result-empty" id="resultEmpty">
-          <div><strong>Awaiting capture</strong><p>Your corrected dose estimate will appear here.</p></div>
+          <span class="empty-icon">↗</span>
+          <div><strong>Awaiting capture</strong><p>Your badge estimate will appear here.</p></div>
         </div>
+
         <div class="result-content" id="resultContent" hidden>
           <div class="result-main">
-            <p class="eyebrow">Latest reading</p>
-            <div class="reading-grid">
-              <div class="reading-field"><small>Estimated H₂S</small><strong id="concentrationValue">0 ppm-equivalent</strong></div>
-              <div class="reading-field"><small>Exposure duration</small><strong id="durationValue">15 min</strong></div>
-              <div class="reading-field"><small>Estimated dose</small><strong id="doseValue">0 ppm·min</strong></div>
-              <div class="reading-field"><small>Confidence</small><strong id="confidenceValue">High</strong></div>
-              <div class="reading-field wide"><small>Temp / humidity drift</small><strong id="driftValue">Low drift</strong></div>
+            <p class="eyebrow">Estimate, color match</p>
+
+            <div class="result-primary-row">
+              <div class="large-ppm-display">
+                <span class="large-ppm" id="concentrationValue">-- ppm</span>
+                <span class="approx-ppm" id="approxPpmValue">~-- ppm</span>
+              </div>
+              <div class="match-badge-wrap">
+                <span class="confidence-chip" id="confidenceValue">--</span>
+                <span class="class-chip" id="classValue">Class --</span>
+              </div>
             </div>
-            <div class="result-meta"><span id="resultTime"></span><span>Band-fit compensation</span></div>
-          </div>
-          <div class="result-statuses">
-            <div class="status-card" id="validityCard"><div><small>Badge validity</small><strong id="validityValue">Valid</strong><p id="validityDetail">Band fit within calibration</p></div></div>
-            <div class="status-card" id="thresholdCard"><div><small>Exposure threshold</small><strong id="thresholdResult">Within limit</strong><p>Configured limit: 10 ppm·min</p></div></div>
-            <div class="status-card" id="aiStatusCard" style="display:none;"><div><small>On-device AI</small><strong id="aiStatusValue">AI Guided</strong><p id="aiStatusDetail">Localized ROIs & corners</p></div></div>
-            <div class="status-card invalid" id="crossCheckCard" style="display:none;"><div><small>Cross-check</small><strong id="crossCheckValue">Cross-Check Alert</strong><p id="crossCheckDetail">Discrepancy detected</p></div></div>
+
+            <div class="reading-grid">
+              <div class="reading-field"><small>Exposure duration</small><strong id="durationValue">15 min</strong></div>
+              <div class="reading-field"><small>Estimated dose</small><strong id="doseValue">0.0 ppm·min</strong></div>
+              <div class="reading-field"><small>Occupational status</small><strong id="thresholdResult">Within limit</strong></div>
+              <div class="reading-field"><small>Capture time</small><strong id="resultTime">--</strong></div>
+            </div>
+
+            <details class="collapsible-details" id="colorMatchDetails">
+              <summary>Color match details</summary>
+              <div class="details-body">
+                <div class="detail-row"><span>S3 measured / matched:</span><strong id="detailS3Hex">--</strong></div>
+                <div class="detail-row"><span>S2 measured / matched:</span><strong id="detailS2Hex">--</strong></div>
+                <div class="detail-row"><span>R3 lighting gains (RGB):</span><strong id="detailGains">--</strong></div>
+                <div class="detail-row"><span>Distances (d1 / d2):</span><strong id="detailDistances">--</strong></div>
+              </div>
+            </details>
           </div>
         </div>
+
         <div class="retake-content" id="retakeContent" hidden>
+          <span class="empty-icon">!</span>
           <div>
             <strong>Retake photo</strong>
             <p id="retakeMessage">Capture quality check failed.</p>
-            <div style="display:flex;gap:8px;margin-top:8px;">
-              <button class="secondary-button" id="forceEstimateButton" type="button" style="height:36px;font-size:12px;padding:0 12px;">Estimate anyway</button>
-            </div>
           </div>
-        </div>
-        <div class="analysis-steps" id="analysisSteps" hidden>
-          <span class="active">01 Capture x3</span><span>02 Reject</span><span>03 Correct</span><span>04 Gate / Save</span>
         </div>
       </section>
 
+      <!-- RECORDS -->
       <section class="log-section" id="recordsSection">
         <div class="section-heading">
           <div>
@@ -333,29 +169,30 @@
           </div>
           <div class="records-header-actions">
             <span class="record-count" id="recordCount">0 saved</span>
-            <button class="text-button danger-text" id="deleteAllRecordsBtn" type="button">Delete all records</button>
+            <button class="text-button destructive" id="deleteAllRecordsBtn" type="button">Delete all records</button>
           </div>
         </div>
+
         <div class="table-wrap">
-          <table>
+          <table id="recordsTable">
             <thead>
               <tr>
                 <th>Worker / badge</th>
-                <th class="col-shift">Shift</th>
-                <th>Band estimate</th>
-                <th>Exposure dose</th>
-                <th class="col-confidence">Confidence</th>
-                <th class="col-drift">Drift</th>
-                <th class="col-actions"><span class="sr-only">Actions</span></th>
+                <th>Time</th>
+                <th>Class</th>
+                <th>Dose</th>
+                <th>Confidence</th>
+                <th style="width:48px;text-align:center;">Action</th>
               </tr>
             </thead>
             <tbody id="recordsBody">
-              <tr class="empty-row"><td colspan="7">No readings yet. Captured records remain available in airplane mode.</td></tr>
+              <tr class="empty-row"><td colspan="6">No readings yet. Captured records remain available in airplane mode.</td></tr>
             </tbody>
           </table>
         </div>
       </section>
 
+      <!-- COMPARE RECORDS -->
       <section class="compare-panel">
         <div class="section-heading">
           <div>
@@ -367,507 +204,39 @@
           <label>Earlier record<select id="compareLeftSelect"><option value="">Select earlier reading</option></select></label>
           <label>Later record<select id="compareRightSelect"><option value="">Select later reading</option></select></label>
         </div>
-        <div class="compare-summary" id="compareSummary">Select two saved readings to view the incremental exposure since the last reading.</div>
+        <div class="compare-summary" id="compareSummary">Select two saved readings to view the incremental exposure.</div>
       </section>
-    </section>
-
-    <!-- DEDICATED PAGE: BROWN SCALE READER -->
-    <section class="brown-scale-page" id="brownScalePage" style="display:none;padding:16px 20px 80px;max-width:1120px;margin:0 auto;">
-      <div class="page-heading">
-        <button class="secondary-button" id="bsBackToScanBtn" type="button" style="margin-bottom:12px;font-size:12px;height:32px;padding:0 12px;cursor:pointer;">&larr; Back to field scan</button>
-        <p class="eyebrow">Dedicated module / Brown scale</p>
-        <h1>Brown scale reader</h1>
-        <p class="lede">Pristine reference (0 ppm, #C4C3BF) vs sample patch. dL differential colorimetry with on-device calibration.</p>
-      </div>
-
-      <section class="capture-layout">
-        <div class="capture-panel" id="bsCaptureSection">
-          <div class="camera-frame" id="bsCameraFrame">
-            <video id="bsCameraFeed" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:cover;"></video>
-            <img id="bsUploadedPreview" style="display:none;width:100%;height:100%;object-fit:contain;position:absolute;inset:0;" alt="Brown scale preview">
-            <div class="camera-placeholder" id="bsCameraPlaceholder">
-              <strong>Camera / preview</strong>
-              <span>Tap to preview camera or load test badge</span>
-            </div>
-            <!-- Vertically split guide: Left Pristine REF, Right Sample -->
-            <div class="bs-badge-guide" id="bsBadgeGuide" aria-hidden="true">
-              <div class="bs-guide-half bs-guide-left">
-                <span>Pristine REF (0 ppm)</span>
-                <div class="bs-guide-sample-box">Center 40%</div>
-              </div>
-              <div class="bs-guide-divider"></div>
-              <div class="bs-guide-half bs-guide-right">
-                <span>SAMPLE PATCH</span>
-                <div class="bs-guide-sample-box">Center 40%</div>
-              </div>
-            </div>
-            <div class="camera-state" id="bsCameraState">Ready</div>
-            <div id="bsCameraLockStatus" class="camera-lock-badge auto" style="position:absolute;top:8px;right:8px;">AE/AWB: Auto</div>
-          </div>
-
-          <div class="capture-actions" style="flex-wrap:wrap;gap:8px;">
-            <button class="capture-button" id="bsCaptureButton" type="button">Capture 20 frames</button>
-            <button class="secondary-button" id="bsRepeatTestButton" type="button">Repeat test (10x)</button>
-            <button class="secondary-button" id="bsTestBadgeButton" type="button">Load test badge</button>
-            <button class="secondary-button" id="bsUploadButton" type="button">Upload image</button>
-            <input id="bsImageInput" type="file" accept="image/*" hidden>
-          </div>
-
-          <div class="bs-controls-bar" style="margin-top:12px;display:flex;align-items:center;gap:8px;font-size:12px;">
-            <span style="color:var(--text-muted);">Test badge level:</span>
-            <select id="bsTestPpmSelect" class="secondary-button" style="height:32px;padding:0 8px;font-size:12px;cursor:pointer;">
-              <option value="0">0 ppm Pristine (#C4C3BF)</option>
-              <option value="1">1 ppm (#C9A793)</option>
-              <option value="5">5 ppm (#C39782)</option>
-              <option value="10">10 ppm (#B17762)</option>
-              <option value="20" selected>20 ppm (#8F5346)</option>
-              <option value="50">50 ppm (#6C463E)</option>
-              <option value="100">100 ppm (#4D3837)</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Result Card -->
-        <aside class="session-panel" id="bsResultSection">
-          <div class="panel-header"><span>Estimate, color match</span></div>
-          <div class="demo-summary-top">
-            <span class="eyebrow" id="bsEstimateLabel">Estimate, color match</span>
-            <div class="demo-estimate-large" id="bsEstimateLargePpm">-- ppm</div>
-          </div>
-
-          <div class="demo-color-meta-grid" style="margin-top:12px;">
-            <div class="demo-meta-item">
-              <small>Pristine hex</small>
-              <div class="hex-badge-row">
-                <span class="color-dot" id="bsRefDot" style="background-color:#C4C3BF;"></span>
-                <code id="bsPristineHex">#C4C3BF</code>
-              </div>
-            </div>
-            <div class="demo-meta-item">
-              <small>Sample hex</small>
-              <div class="hex-badge-row">
-                <span class="color-dot" id="bsSampleDot"></span>
-                <code id="bsSampleHex">--</code>
-              </div>
-            </div>
-            <div class="demo-meta-item">
-              <small>dL (L*ref - L*smp)</small>
-              <strong class="demo-meta-value" id="bsDLVal" style="color:#38bdf8;">--</strong>
-            </div>
-            <div class="demo-meta-item">
-              <small>Matched table hex</small>
-              <div class="hex-badge-row">
-                <span class="color-dot" id="bsTableDot"></span>
-                <code id="bsMatchedTableHex">--</code>
-              </div>
-            </div>
-            <div class="demo-meta-item">
-              <small>Nearest labeled patch</small>
-              <strong class="demo-meta-value" id="bsNearestPatchVal">--</strong>
-            </div>
-            <div class="demo-meta-item">
-              <small>Active table</small>
-              <span id="bsProfileStatus" class="gate-tag pass">Default table</span>
-            </div>
-          </div>
-
-          <!-- Quality Gates -->
-          <div style="margin-top:12px;border-top:1px solid var(--border-color);padding-top:8px;">
-            <small style="color:var(--text-muted);display:block;margin-bottom:6px;">Quality gates:</small>
-            <div id="bsQualityGates" style="display:flex;flex-direction:column;gap:4px;">
-              <span class="gate-tag pass" id="bsGateUniformity">Uniformity: Pass</span>
-              <span class="gate-tag pass" id="bsGateClipping">Clipping: Pass</span>
-              <span class="gate-tag pass" id="bsGateRefCheck">Reference check (#C4C3BF): Pass</span>
-            </div>
-          </div>
-        </aside>
-      </section>
-
-      <!-- Repeat test diagnostics -->
-      <section class="demo-repeat-card" id="bsRepeatTestCard" style="display:none;margin-top:16px;padding:16px;background:var(--surface-color, #1e293b);border-radius:8px;border:1px solid var(--border-color, #334155);">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <h3 style="font-size:14px;margin:0;">Repeat test diagnostics (10 captures)</h3>
-          <span class="gate-tag pass" id="bsRepeatStatus">Completed</span>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:12px;font-size:12px;">
-          <div><small style="color:var(--text-muted);display:block;">dL Mean</small><strong id="bsDLMean">--</strong></div>
-          <div><small style="color:var(--text-muted);display:block;">dL Min / Max</small><span id="bsDLMinMax">--</span></div>
-          <div><small style="color:var(--text-muted);display:block;">ppm Mean</small><strong id="bsPpmMean">--</strong></div>
-          <div><small style="color:var(--text-muted);display:block;">ppm Min / Max</small><span id="bsPpmMinMax">--</span></div>
-        </div>
-      </section>
-
-      <!-- Calibration Section -->
-      <section class="log-section" id="bsCalibrationSection" style="margin-top:24px;">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">On-device calibration</p>
-            <h2>Calibrate brown scale</h2>
-            <p class="lede" style="font-size:13px;margin-top:4px;color:var(--text-muted);">
-              For each level, place the printed patch with the pristine reference, and tap Calibrate level. Stored in localStorage.
-            </p>
-          </div>
-          <div class="records-header-actions">
-            <button class="secondary-button" id="bsResetDefaultsBtn" type="button" style="font-size:12px;height:32px;">Reset to defaults</button>
-            <button class="text-button danger-text" id="bsDeleteCalibrationBtn" type="button" style="font-size:12px;">Delete calibration</button>
-          </div>
-        </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Level</th>
-                <th>Built-in hex</th>
-                <th>Built-in dL</th>
-                <th>Calibrated status</th>
-                <th>Calibrated dL</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody id="bsCalibrationTableBody">
-              <!-- Populated by JS -->
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- History Section -->
-      <section class="log-section" id="bsHistorySection" style="margin-top:24px;">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Local history</p>
-            <h2>Recent readings (last 10)</h2>
-          </div>
-          <div class="records-header-actions">
-            <button class="text-button danger-text" id="bsDeleteAllHistoryBtn" type="button" style="font-size:12px;">Delete all</button>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Pristine hex</th>
-                <th>Sample hex</th>
-                <th>dL</th>
-                <th>Matched hex</th>
-                <th>Estimate range</th>
-              </tr>
-            </thead>
-            <tbody id="bsHistoryBody">
-              <tr class="empty-row"><td colspan="6">No readings yet.</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </section>
-
-    <!-- DEDICATED PAGE: PURPLE SCALE READER -->
-    <section class="purple-scale-page" id="purpleScalePage" style="display:none;padding:16px 20px 80px;max-width:1120px;margin:0 auto;">
-      <div class="page-heading">
-        <button class="secondary-button" id="psBackToScanBtn" type="button" style="margin-bottom:12px;font-size:12px;height:32px;padding:0 12px;cursor:pointer;">&larr; Back to field scan</button>
-        <p class="eyebrow">Dedicated module / Purple scale</p>
-        <h1>Purple scale reader</h1>
-        <p class="lede">Reference (0 ppm, #C27FB9) vs sample patch. db differential colorimetry with on-device calibration.</p>
-      </div>
-
-      <section class="capture-layout">
-        <div class="capture-panel" id="psCaptureSection">
-          <div class="camera-frame" id="psCameraFrame">
-            <video id="psCameraFeed" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:cover;"></video>
-            <img id="psUploadedPreview" style="display:none;width:100%;height:100%;object-fit:contain;position:absolute;inset:0;" alt="Purple scale preview">
-            <div class="camera-placeholder" id="psCameraPlaceholder">
-              <strong>Camera / preview</strong>
-              <span>Tap to preview camera or load test badge</span>
-            </div>
-            <!-- Vertically split guide: Left Reference (0 ppm, #C27FB9), Right Sample -->
-            <div class="bs-badge-guide" id="psBadgeGuide" aria-hidden="true">
-              <div class="bs-guide-half" style="background:rgba(194, 127, 185, 0.15);">
-                <span>0 ppm REF (#C27FB9)</span>
-                <div class="bs-guide-sample-box">Center 40%</div>
-              </div>
-              <div class="bs-guide-divider"></div>
-              <div class="bs-guide-half" style="background:rgba(145, 102, 138, 0.15);">
-                <span>SAMPLE PATCH</span>
-                <div class="bs-guide-sample-box">Center 40%</div>
-              </div>
-            </div>
-            <div class="camera-state" id="psCameraState">Ready</div>
-            <div id="psCameraLockStatus" class="camera-lock-badge auto" style="position:absolute;top:8px;right:8px;">AE/AWB: Auto</div>
-          </div>
-
-          <div class="capture-actions" style="flex-wrap:wrap;gap:8px;">
-            <button class="capture-button" id="psCaptureButton" type="button">Capture 20 frames</button>
-            <button class="secondary-button" id="psRepeatTestButton" type="button">Repeat test (10x)</button>
-            <button class="secondary-button" id="psTestBadgeButton" type="button">Load test badge</button>
-            <button class="secondary-button" id="psUploadButton" type="button">Upload image</button>
-            <input id="psImageInput" type="file" accept="image/*" hidden>
-          </div>
-
-          <div class="bs-controls-bar" style="margin-top:12px;display:flex;align-items:center;gap:8px;font-size:12px;">
-            <span style="color:var(--text-muted);">Test badge level:</span>
-            <select id="psTestPpmSelect" class="secondary-button" style="height:32px;padding:0 8px;font-size:12px;cursor:pointer;">
-              <option value="0">0 ppm REF (#C27FB9)</option>
-              <option value="0.06">0.06 ppm (#92729D)</option>
-              <option value="0.1">0.1 ppm (#9786A7)</option>
-              <option value="0.25">0.25 ppm (#91668A)</option>
-              <option value="0.4">0.4 ppm (#8B4F6A)</option>
-              <option value="0.6">0.6 ppm (#925D74)</option>
-              <option value="1">1 ppm (#A47586)</option>
-              <option value="2.5" selected>2.5 ppm (#BA8E98)</option>
-              <option value="4">4 ppm (#CFB4A9)</option>
-              <option value="8">8 ppm (#E0C6AD)</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Result Card -->
-        <aside class="session-panel" id="psResultSection">
-          <div class="panel-header"><span>Estimate, color match</span></div>
-          <div class="demo-summary-top">
-            <span class="eyebrow" id="psEstimateLabel">Estimate, color match</span>
-            <div class="demo-estimate-large" id="psEstimateLargePpm">-- ppm</div>
-          </div>
-
-          <div class="demo-color-meta-grid" style="margin-top:12px;">
-            <div class="demo-meta-item">
-              <small>Reference hex</small>
-              <div class="hex-badge-row">
-                <span class="color-dot" id="psRefDot" style="background-color:#C27FB9;"></span>
-                <code id="psRefHex">#C27FB9</code>
-              </div>
-            </div>
-            <div class="demo-meta-item">
-              <small>Sample hex</small>
-              <div class="hex-badge-row">
-                <span class="color-dot" id="psSampleDot"></span>
-                <code id="psSampleHex">--</code>
-              </div>
-            </div>
-            <div class="demo-meta-item">
-              <small>db (b*smp - b*ref)</small>
-              <strong class="demo-meta-value" id="psDbVal" style="color:#a855f7;">--</strong>
-            </div>
-            <div class="demo-meta-item">
-              <small>Matched table hex</small>
-              <div class="hex-badge-row">
-                <span class="color-dot" id="psTableDot"></span>
-                <code id="psMatchedTableHex">--</code>
-              </div>
-            </div>
-            <div class="demo-meta-item">
-              <small>Nearest labeled patch</small>
-              <strong class="demo-meta-value" id="psNearestPatchVal">--</strong>
-            </div>
-            <div class="demo-meta-item">
-              <small>Active table</small>
-              <span id="psProfileStatus" class="gate-tag pass">Default table</span>
-            </div>
-          </div>
-
-          <!-- Quality Gates -->
-          <div style="margin-top:12px;border-top:1px solid var(--border-color);padding-top:8px;">
-            <small style="color:var(--text-muted);display:block;margin-bottom:6px;">Quality gates:</small>
-            <div id="psQualityGates" style="display:flex;flex-direction:column;gap:4px;">
-              <span class="gate-tag pass" id="psGateUniformity">Uniformity: Pass</span>
-              <span class="gate-tag pass" id="psGateClipping">Clipping: Pass</span>
-              <span class="gate-tag pass" id="psGateRefCheck">Reference check (#C27FB9): Pass</span>
-            </div>
-          </div>
-        </aside>
-      </section>
-
-      <!-- Repeat test diagnostics -->
-      <section class="demo-repeat-card" id="psRepeatTestCard" style="display:none;margin-top:16px;padding:16px;background:var(--surface-color, #1e293b);border-radius:8px;border:1px solid var(--border-color, #334155);">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <h3 style="font-size:14px;margin:0;">Repeat test diagnostics (10 captures)</h3>
-          <span class="gate-tag pass" id="psRepeatStatus">Completed</span>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:12px;font-size:12px;">
-          <div><small style="color:var(--text-muted);display:block;">db Mean</small><strong id="psDbMean">--</strong></div>
-          <div><small style="color:var(--text-muted);display:block;">db Min / Max</small><span id="psDbMinMax">--</span></div>
-          <div><small style="color:var(--text-muted);display:block;">ppm Mean</small><strong id="psPpmMean">--</strong></div>
-          <div><small style="color:var(--text-muted);display:block;">ppm Min / Max</small><span id="psPpmMinMax">--</span></div>
-        </div>
-      </section>
-
-      <!-- Calibration Section -->
-      <section class="log-section" id="psCalibrationSection" style="margin-top:24px;">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">On-device calibration</p>
-            <h2>Calibrate purple scale</h2>
-            <p class="lede" style="font-size:13px;margin-top:4px;color:var(--text-muted);">
-              For each level, place the printed patch with the 0 ppm reference, and tap Calibrate level. Stored in localStorage.
-            </p>
-          </div>
-          <div class="records-header-actions">
-            <button class="secondary-button" id="psResetDefaultsBtn" type="button" style="font-size:12px;height:32px;">Reset to defaults</button>
-            <button class="text-button danger-text" id="psDeleteCalibrationBtn" type="button" style="font-size:12px;">Delete calibration</button>
-          </div>
-        </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Level</th>
-                <th>Built-in hex</th>
-                <th>Built-in db</th>
-                <th>Calibrated status</th>
-                <th>Calibrated db</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody id="psCalibrationTableBody">
-              <!-- Populated by JS -->
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- History Section -->
-      <section class="log-section" id="psHistorySection" style="margin-top:24px;">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Local history</p>
-            <h2>Recent readings (last 10)</h2>
-          </div>
-          <div class="records-header-actions">
-            <button class="text-button danger-text" id="psDeleteAllHistoryBtn" type="button" style="font-size:12px;">Delete all</button>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Reference hex</th>
-                <th>Sample hex</th>
-                <th>db</th>
-                <th>Matched hex</th>
-                <th>Estimate range</th>
-              </tr>
-            </thead>
-            <tbody id="psHistoryBody">
-              <tr class="empty-row"><td colspan="6">No readings yet.</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </section>
+    </div>
 
     <footer>
       <span>Local storage active</span>
-      <span>Calibration profile v1.6</span>
-      <span>Last sync: never</span>
+      <span>Unified color match v2.0</span>
     </footer>
   </main>
 
-  <div class="crop-modal" id="cropModal" hidden>
-    <section class="crop-dialog" role="dialog" aria-modal="true" aria-labelledby="cropTitle">
-      <div class="panel-header"><span id="cropTitle">Crop badge</span></div>
-      <div class="crop-stage" id="cropStage">
-        <img id="cropPreview" alt="Image selected for badge crop">
-        <div class="crop-selection" id="cropSelection" aria-hidden="true"></div>
-      </div>
-      <div class="crop-actions">
-        <button class="secondary-button" id="cancelCropButton" type="button">Cancel</button>
-        <button class="capture-button" id="analyzeCropButton" type="button" disabled>Analyze crop</button>
-      </div>
-    </section>
-  </div>
-
-  <!-- Delete Confirmation Dialog Modal -->
-  <div class="confirm-modal" id="confirmModal" hidden>
-    <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
-      <h3 id="confirmTitle" class="confirm-title">Delete confirmation</h3>
-      <p id="confirmMessage" class="confirm-message">Delete all saved readings? This can't be undone.</p>
+  <!-- CONFIRMATION DIALOG MODAL -->
+  <div class="confirm-modal hidden" id="confirmDeleteModal" hidden style="display:none;">
+    <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmDialogTitle">
+      <h3 id="confirmDialogTitle">Confirm delete</h3>
+      <p id="confirmDialogMessage">Delete all saved readings? This can't be undone.</p>
       <div class="confirm-actions">
         <button class="secondary-button" id="confirmCancelBtn" type="button">Cancel</button>
-        <button class="text-button danger-text" id="confirmDeleteBtn" type="button">Delete</button>
+        <button class="danger-button" id="confirmDeleteBtn" type="button">Delete</button>
       </div>
     </div>
   </div>
 
-  <script src="demo-color-reader.js?v=2.4"></script>
-  <script src="brown-scale-reader.js?v=1.0"></script>
-  <script src="ai-detector.js?v=2.3" defer></script>
-  <script src="app.js?v=2.4"></script>
-  <script>
-    if ('caches' in window) {
-      caches.keys().then((names) => {
-        names.forEach((name) => {
-          if (name !== 'h2s-badge-reader-v5') {
-            caches.delete(name);
-          }
-        });
-      });
-    }
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
-          .then((registration) => {
-            console.log('ServiceWorker registered with scope:', registration.scope);
-          })
-          .catch((error) => {
-            console.error('ServiceWorker registration failed:', error);
-          });
-      });
-    }
-
-    // PWA Install prompt handling
-    let deferredInstallPrompt = null;
-    const installBtn = document.querySelector('#pwaInstallButton');
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-
-    if (!isStandalone) {
-      window.addEventListener('beforeinstallprompt', (e) => {
-        e.preventDefault();
-        deferredInstallPrompt = e;
-        if (installBtn) installBtn.style.display = 'inline-flex';
-      });
-
-      if (installBtn) {
-        installBtn.addEventListener('click', async () => {
-          if (deferredInstallPrompt) {
-            deferredInstallPrompt.prompt();
-            const choiceResult = await deferredInstallPrompt.userChoice;
-            if (choiceResult.outcome === 'accepted') {
-              installBtn.style.display = 'none';
-            }
-            deferredInstallPrompt = null;
-          }
-        });
-      }
-
-      window.addEventListener('appinstalled', () => {
-        if (installBtn) installBtn.style.display = 'none';
-        deferredInstallPrompt = null;
-      });
-    }
-  </script>
-
-  <!-- Bottom Navigation -->
+  <!-- FLOATING PILL BOTTOM NAVIGATION -->
   <nav class="floating-bottom-nav" id="bottomNav" aria-label="Quick navigation">
     <button class="nav-pill-btn active" id="navScan" type="button" aria-label="Scan badge">
       <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
       <span>Scan</span>
     </button>
-    <button class="nav-pill-btn" id="navBrownScale" type="button" aria-label="Brown scale">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg>
-      <span>Brown scale</span>
-    </button>
-    <button class="nav-pill-btn" id="navPurpleScale" type="button" aria-label="Purple scale">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><path d="M12 3v18"></path></svg>
-      <span>Purple scale</span>
-    </button>
-    <button class="nav-pill-btn" id="navResults" type="button" aria-label="View dose results">
+    <button class="nav-pill-btn" id="navResults" type="button" aria-label="View results">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
       <span>Results</span>
     </button>
-    <button class="nav-pill-btn" id="navRecords" type="button" aria-label="View saved records">
+    <button class="nav-pill-btn" id="navRecords" type="button" aria-label="View records">
       <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
       <span>Records</span>
     </button>
@@ -877,104 +246,31 @@
     </button>
   </nav>
 
+  <script src="app.js?v=3.0"></script>
   <script>
-    // Bottom Navigation Tab Switching
+    // Tab navigation
     const navItems = [
-      { btnId: 'navScan', targetId: 'captureSection', isPage: false },
-      { btnId: 'navBrownScale', targetId: 'brownScalePage', isPage: true },
-      { btnId: 'navPurpleScale', targetId: 'purpleScalePage', isPage: true },
-      { btnId: 'navResults', targetId: 'resultPanel', isPage: false },
-      { btnId: 'navRecords', targetId: 'recordsSection', isPage: false },
-      { btnId: 'navSession', targetId: 'sessionSection', isPage: false }
+      { btnId: 'navScan', targetId: 'captureSection' },
+      { btnId: 'navResults', targetId: 'resultPanel' },
+      { btnId: 'navRecords', targetId: 'recordsSection' },
+      { btnId: 'navSession', targetId: 'sessionSection' }
     ];
 
-    function activateTab(item) {
-      navItems.forEach(n => document.getElementById(n.btnId)?.classList.remove('active'));
-      document.getElementById(item.btnId)?.classList.add('active');
-
-      const workspace = document.querySelector('.workspace');
-      const brownScalePage = document.getElementById('brownScalePage');
-      const purpleScalePage = document.getElementById('purpleScalePage');
-
-      if (item.isPage) {
-        if (workspace) workspace.style.display = 'none';
-        if (brownScalePage) brownScalePage.style.display = item.targetId === 'brownScalePage' ? 'block' : 'none';
-        if (purpleScalePage) purpleScalePage.style.display = item.targetId === 'purpleScalePage' ? 'block' : 'none';
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-
-        const isPurple = item.targetId === 'purpleScalePage';
-        const targetVideo = isPurple ? document.querySelector('#psCameraFeed') : document.querySelector('#bsCameraFeed');
-        const targetPlaceholder = isPurple ? document.querySelector('#psCameraPlaceholder') : document.querySelector('#bsCameraPlaceholder');
-        const mainVideo = document.querySelector('#cameraFeed');
-
-        if (targetVideo && mainVideo?.srcObject) {
-          targetVideo.srcObject = mainVideo.srcObject;
-          targetVideo.style.display = 'block';
-          if (targetPlaceholder) targetPlaceholder.style.display = 'none';
-          try { targetVideo.play(); } catch (e) {}
-        }
-      } else {
-        if (workspace) workspace.style.display = '';
-        if (brownScalePage) brownScalePage.style.display = 'none';
-        if (purpleScalePage) purpleScalePage.style.display = 'none';
-        const target = document.getElementById(item.targetId);
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-      }
-    }
-
-    function setupNavigation() {
-      navItems.forEach(item => {
-        const btn = document.getElementById(item.btnId);
-        if (btn) {
-          btn.onclick = (e) => {
-            e.preventDefault();
-            activateTab(item);
-          };
-        }
-      });
-
-      document.getElementById('bsBackToScanBtn')?.addEventListener('click', (e) => {
-        e.preventDefault();
-        activateTab(navItems[0]);
-      });
-
-      document.getElementById('psBackToScanBtn')?.addEventListener('click', (e) => {
-        e.preventDefault();
-        activateTab(navItems[0]);
-      });
-    }
-
-    // Run setup immediately and on DOMContentLoaded
-    setupNavigation();
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', setupNavigation);
-    }
-
-    // Auto-update active tab on scroll
-    if ('IntersectionObserver' in window) {
-      const observer = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting && entry.intersectionRatio >= 0.4) {
-            const found = navItems.find(n => n.targetId === entry.target.id && !n.isPage);
-            if (found && document.querySelector('.workspace')?.style.display !== 'none') {
-              navItems.forEach(n => document.getElementById(n.btnId)?.classList.remove('active'));
-              document.getElementById(found.btnId)?.classList.add('active');
-            }
+    navItems.forEach(item => {
+      const btn = document.getElementById(item.btnId);
+      if (btn) {
+        btn.addEventListener('click', () => {
+          navItems.forEach(n => document.getElementById(n.btnId)?.classList.remove('active'));
+          btn.classList.add('active');
+          const target = document.getElementById(item.targetId);
+          if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
           }
         });
-      }, { threshold: [0.4] });
+      }
+    });
 
-      navItems.forEach(item => {
-        if (!item.isPage) {
-          const el = document.getElementById(item.targetId);
-          if (el) observer.observe(el);
-        }
-      });
-    }
-
-    // Theme Toggle (Light / Dark)
+    // Theme toggle
     const themeToggleBtn = document.getElementById('themeToggle');
     const currentTheme = localStorage.getItem('h2s-theme') || 'light';
     document.documentElement.setAttribute('data-theme', currentTheme);
@@ -990,10 +286,10 @@
     applyThemeIcon(currentTheme);
 
     themeToggleBtn?.addEventListener('click', () => {
-      const active = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', active);
-      localStorage.setItem('h2s-theme', active);
-      applyThemeIcon(active);
+      const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('h2s-theme', next);
+      applyThemeIcon(next);
     });
   </script>
 </body>
