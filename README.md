@@ -1,5 +1,5 @@
 # H2S Badge Reader
-
+[![Repo Audited - Grade: F](https://repo-auditor.dev/badge/audit-mwauozo5-leuv.svg)](https://repo-auditor.dev/r/audit-mwauozo5-leuv)
 ## Color-reading pipeline
 
 - Camera captures use the on-screen badge guide as a source-pixel crop. Uploaded photos require a user-drawn crop before analysis.
